@@ -32,13 +32,12 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) > 2 {
-		return usageError()
+	debug, subcommand, err := parseArgs(args)
+	if err != nil {
+		return err
 	}
-	if len(args) == 2 {
-		if args[1] != "setup" {
-			return usageError()
-		}
+	setDebug(debug)
+	if subcommand == "setup" {
 		return runSetup()
 	}
 
@@ -95,8 +94,40 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	fmt.Fprintln(os.Stderr, "usage: wtx [setup]")
+	fmt.Fprintln(os.Stderr, "usage: wtx [-d] [setup]")
 	return errors.New("invalid arguments")
+}
+
+var debugFlag bool
+
+func setDebug(enabled bool) {
+	debugFlag = enabled
+}
+
+func debugEnabled() bool {
+	return debugFlag
+}
+
+func parseArgs(args []string) (bool, string, error) {
+	if len(args) <= 1 {
+		return false, "", nil
+	}
+	debug := false
+	subcommand := ""
+	for _, arg := range args[1:] {
+		switch arg {
+		case "-d", "--debug":
+			debug = true
+		case "setup":
+			if subcommand != "" {
+				return false, "", usageError()
+			}
+			subcommand = "setup"
+		default:
+			return false, "", usageError()
+		}
+	}
+	return debug, subcommand, nil
 }
 
 func setTitle(title string) {
@@ -179,6 +210,7 @@ type menuItem struct {
 	IsWorktree bool
 	Status     string
 	Path       string
+	LockID     string
 }
 
 type actionItem struct {
@@ -198,6 +230,7 @@ type menuItemView struct {
 	BranchPad   int
 	LastUsedPad int
 	Kind        menuItemKind
+	LockID      string
 }
 
 type worktreeLock struct {
@@ -480,6 +513,10 @@ func buildMenuItems(repoRoot string, options []worktreeOption) ([]menuItem, erro
 		if err != nil {
 			return nil, err
 		}
+		lockID, err := worktreeID(repoRoot, option.Info.Path)
+		if err != nil {
+			lockID = ""
+		}
 		label := option.Info.Branch
 		status := "free"
 		if !option.Available {
@@ -496,6 +533,7 @@ func buildMenuItems(repoRoot string, options []worktreeOption) ([]menuItem, erro
 			IsWorktree: true,
 			Status:     status,
 			Path:       option.Info.Path,
+			LockID:     lockID,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -535,14 +573,19 @@ func promptSelectMenu(repoName string, items []menuItem) (menuItem, error) {
 			BranchPad:   branchPad,
 			LastUsedPad: lastUsedPad,
 			Kind:        item.Kind,
+			LockID:      item.LockID,
 		})
 	}
 
+	details := "{{ if .IsWorktree }}{{ if .Path }}{{ \"Path: \" | faint }}{{ .Path | faint }}{{ end }}{{ end }}"
+	if debugEnabled() {
+		details = "{{ if .IsWorktree }}{{ if .Path }}{{ \"Path: \" | faint }}{{ .Path | faint }}{{ end }}{{ if .LockID }}\n{{ \"Lock ID: \" | faint }}{{ .LockID | faint }}{{ end }}{{ end }}"
+	}
 	templates := &promptui.SelectTemplates{
 		Active:   "{{ if .IsWorktree }}{{ if .Available }}{{ cyan \"▸\" }} {{ cyan (bold (printf \"%-*s\" .BranchPad .Label)) }}  {{ printf \"%-7s\" .Status }} {{ printf \"%-*s\" .LastUsedPad .LastUsed }}{{ else }}{{ dim \"▸\" }} {{ dimBold (printf \"%-*s\" .BranchPad .Label) }}  {{ dim (printf \"%-7s %-*s\" .Status .LastUsedPad .LastUsed) }}{{ end }}{{ else }}{{ if eq .Kind 3 }}{{ dim \"▸\" }} {{ dim .Label }}{{ else }}{{ cyan \"▸\" }} {{ cyan .Label }}{{ end }}{{ end }}",
 		Inactive: "{{ if .IsWorktree }}{{ if .Available }}  {{ printf \"%-*s\" .BranchPad .Label }}  {{ printf \"%-7s\" .Status }} {{ printf \"%-*s\" .LastUsedPad .LastUsed }}{{ else }}  {{ dimBold (printf \"%-*s\" .BranchPad .Label) }}  {{ dim (printf \"%-7s %-*s\" .Status .LastUsedPad .LastUsed) }}{{ end }}{{ else }}{{ if eq .Kind 3 }}  {{ dim .Label }}{{ else }}  {{ .Label }}{{ end }}{{ end }}",
 		Selected: "{{ if .IsWorktree }}{{ if .Available }}{{ cyan \"✔\" }} {{ cyan (bold (printf \"%-*s\" .BranchPad .Label)) }}  {{ printf \"%-7s\" .Status }} {{ printf \"%-*s\" .LastUsedPad .LastUsed }}{{ else }}{{ dim \"✔\" }} {{ dimBold (printf \"%-*s\" .BranchPad .Label) }}  {{ dim (printf \"%-7s %-*s\" .Status .LastUsedPad .LastUsed) }}{{ end }}{{ else }}{{ if eq .Kind 3 }}{{ dim \"✔\" }} {{ dim .Label }}{{ else }}{{ cyan \"✔\" }} {{ cyan .Label }}{{ end }}{{ end }}",
-		Details:  "{{ if .IsWorktree }}{{ if .Path }}{{ \"Path: \" | faint }}{{ .Path | faint }}{{ end }}{{ end }}",
+		Details:  details,
 		FuncMap:  funcMap,
 	}
 
@@ -851,11 +894,14 @@ func isWorktreeAvailable(repoRoot string, worktreePath string) (bool, error) {
 	}
 	info, err := os.Stat(lockPath)
 	if err == nil {
-		if time.Since(info.ModTime()) < 10*time.Second {
+		payload, perr := readLockPayload(lockPath)
+		if perr != nil {
 			return false, nil
 		}
-		payload, perr := readLockPayload(lockPath)
-		if perr == nil && payload.PID > 0 && pidAlive(payload.PID) {
+		if payload.PID > 0 && pidAlive(payload.PID) {
+			return false, nil
+		}
+		if time.Since(info.ModTime()) < 10*time.Second {
 			return false, nil
 		}
 		return true, nil
