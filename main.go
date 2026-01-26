@@ -887,6 +887,7 @@ func lockWorktree(repoRoot string, wt worktreeInfo) (*worktreeLock, error) {
 			return nil, werr
 		}
 		_ = file.Close()
+		_ = writeLastUsed(repoRoot, wt.Path)
 		return newWorktreeLock(lockPath, wt, repoRoot, ownerID, pid), nil
 	}
 
@@ -919,6 +920,7 @@ func lockWorktree(repoRoot string, wt worktreeInfo) (*worktreeLock, error) {
 		return nil, errors.New("worktree locked")
 	}
 
+	_ = writeLastUsed(repoRoot, wt.Path)
 	return newWorktreeLock(lockPath, wt, repoRoot, ownerID, pid), nil
 }
 
@@ -983,6 +985,7 @@ func (l *worktreeLock) Release() {
 
 func (l *worktreeLock) signalLostLock(reason string) {
 	l.lostOnce.Do(func() {
+		_ = writeLastUsed(l.RepoRoot, l.WorktreePath)
 		fmt.Fprintln(os.Stderr, "wtx error: worktree lock lost:", reason)
 		os.Exit(1)
 	})

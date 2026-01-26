@@ -1,4 +1,4 @@
-module claudex
+module wtx
 
 go 1.21
 
