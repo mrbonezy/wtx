@@ -25,14 +25,20 @@ import (
 
 func main() {
 	if err := run(os.Args); err != nil {
-		fmt.Fprintln(os.Stderr, "claudex error:", err)
+		fmt.Fprintln(os.Stderr, "wtx error:", err)
 		os.Exit(exitCode(err))
 	}
 }
 
 func run(args []string) error {
-	if len(args) > 1 {
+	if len(args) > 2 {
 		return usageError()
+	}
+	if len(args) == 2 {
+		if args[1] != "setup" {
+			return usageError()
+		}
+		return runSetup()
 	}
 
 	repoInfo, ok := detectRepoInfo()
@@ -56,10 +62,15 @@ func run(args []string) error {
 		return nil
 	}
 
+	config, err := loadConfig()
+	if err != nil {
+		return err
+	}
+
 	lock := selection.Lock
-	defer lock.Release()
 	lock.StartToucher()
 	defer lock.StopToucher()
+	defer lock.Release()
 
 	fmt.Fprintln(os.Stdout, "using worktree at", lock.WorktreePath)
 
@@ -68,12 +79,22 @@ func run(args []string) error {
 	if os.Getenv("TERM_PROGRAM") == "iTerm.app" {
 		setITermBlueTab()
 	}
-	waitForInterrupt()
-	return nil
+
+	agentCmd := strings.TrimSpace(config.AgentCommand)
+	if agentCmd == "" {
+		agentCmd = defaultAgentCommand
+	}
+
+	cmd := exec.Command("/bin/sh", "-c", agentCmd)
+	cmd.Dir = lock.WorktreePath
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
 }
 
 func usageError() error {
-	fmt.Fprintln(os.Stderr, "usage: claudex")
+	fmt.Fprintln(os.Stderr, "usage: wtx [setup]")
 	return errors.New("invalid arguments")
 }
 
@@ -1002,4 +1023,117 @@ func waitForInterrupt() {
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGINT, syscall.SIGTERM)
 	<-signals
+}
+
+const defaultAgentCommand = "claude"
+
+type config struct {
+	AgentCommand string `json:"agent_command"`
+}
+
+func runSetup() error {
+	fmt.Fprintln(os.Stdout, "wtx setup")
+	choice, err := promptSetupMenu()
+	if err != nil {
+		return err
+	}
+	if choice != "ai_agent" {
+		return nil
+	}
+	current, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	cmd, err := promptAgentCommand(current.AgentCommand)
+	if err != nil {
+		return err
+	}
+	current.AgentCommand = cmd
+	return saveConfig(current)
+}
+
+func promptSetupMenu() (string, error) {
+	items := []actionItem{
+		{Kind: "ai_agent", Label: "AI agent"},
+	}
+	templates := &promptui.SelectTemplates{
+		Active:   "{{ cyan \"▸\" }} {{ cyan .Label }}",
+		Inactive: "  {{ .Label }}",
+		Selected: "{{ cyan \"✔\" }} {{ cyan .Label }}",
+	}
+	selectPrompt := promptui.Select{
+		Label:       "Setup",
+		Items:       items,
+		Templates:   templates,
+		Size:        min(len(items), 6),
+		HideSelected: true,
+	}
+	index, _, err := selectPrompt.Run()
+	if err != nil {
+		return "", err
+	}
+	return items[index].Kind, nil
+}
+
+func promptAgentCommand(current string) (string, error) {
+	current = strings.TrimSpace(current)
+	if current == "" {
+		current = defaultAgentCommand
+	}
+	prompt := promptui.Prompt{
+		Label:   "AI agent command",
+		Default: current,
+	}
+	value, err := prompt.Run()
+	if err != nil {
+		return "", err
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return current, nil
+	}
+	return value, nil
+}
+
+func loadConfig() (config, error) {
+	path, err := configPath()
+	if err != nil {
+		return config{}, err
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return config{AgentCommand: defaultAgentCommand}, nil
+		}
+		return config{}, err
+	}
+	var cfg config
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		return config{}, err
+	}
+	return cfg, nil
+}
+
+func saveConfig(cfg config) error {
+	path, err := configPath()
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	return os.WriteFile(path, data, 0o644)
+}
+
+func configPath() (string, error) {
+	home := os.Getenv("HOME")
+	if home == "" {
+		return "", errors.New("HOME not set")
+	}
+	return filepath.Join(home, ".wtx", "config.json"), nil
 }
