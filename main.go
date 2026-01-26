@@ -854,6 +854,10 @@ func isWorktreeAvailable(repoRoot string, worktreePath string) (bool, error) {
 		if time.Since(info.ModTime()) < 10*time.Second {
 			return false, nil
 		}
+		payload, perr := readLockPayload(lockPath)
+		if perr == nil && payload.PID > 0 && pidAlive(payload.PID) {
+			return false, nil
+		}
 		return true, nil
 	}
 	if errors.Is(err, os.ErrNotExist) {
@@ -1075,6 +1079,20 @@ func readLockPayload(path string) (lockPayloadData, error) {
 		return lockPayloadData{}, err
 	}
 	return payload, nil
+}
+
+func pidAlive(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	err := syscall.Kill(pid, 0)
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	return false
 }
 
 func randomToken() string {
