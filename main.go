@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -40,6 +41,13 @@ func run(args []string) error {
 	setDebug(debug)
 	if subcommand == "setup" {
 		return runSetup()
+	}
+	if subcommand == "version" {
+		fmt.Fprintln(os.Stdout, versionString())
+		return nil
+	}
+	if subcommand == "check" {
+		return checkForUpdates()
 	}
 
 	repoInfo, ok := detectRepoInfo()
@@ -111,7 +119,7 @@ func run(args []string) error {
 }
 
 func usageError() error {
-	fmt.Fprintln(os.Stderr, "usage: wtx [-d] [setup]")
+	fmt.Fprintln(os.Stderr, "usage: wtx [-d] [setup|version|check]")
 	return errors.New("invalid arguments")
 }
 
@@ -140,6 +148,11 @@ func parseArgs(args []string) (bool, string, error) {
 				return false, "", usageError()
 			}
 			subcommand = "setup"
+		case "version", "check":
+			if subcommand != "" {
+				return false, "", usageError()
+			}
+			subcommand = arg
 		default:
 			return false, "", usageError()
 		}
@@ -1549,4 +1562,100 @@ func (b *bellFilterWriter) Close() error {
 
 func promptStdout() io.WriteCloser {
 	return &bellFilterWriter{w: os.Stdout}
+}
+
+type releaseInfo struct {
+	TagName string `json:"tag_name"`
+}
+
+func checkForUpdates() error {
+	if version == "dev" {
+		fmt.Fprintln(os.Stdout, "wtx version: dev (no update check for dev builds)")
+		return nil
+	}
+	latest, err := fetchLatestReleaseTag()
+	if err != nil {
+		return err
+	}
+	if latest == "" {
+		return errors.New("unable to determine latest release")
+	}
+	switch compareSemver(version, latest) {
+	case 0:
+		fmt.Fprintf(os.Stdout, "wtx is up to date (%s)\n", version)
+	case 1:
+		fmt.Fprintf(os.Stdout, "wtx is ahead of latest release (%s > %s)\n", version, latest)
+	default:
+		fmt.Fprintf(os.Stdout, "update available: %s -> %s\n", version, latest)
+		fmt.Fprintln(os.Stdout, "Install the latest with: curl -fsSL https://raw.githubusercontent.com/mrbonezy/wtx/main/scripts/install.sh | sh")
+	}
+	return nil
+}
+
+func fetchLatestReleaseTag() (string, error) {
+	req, err := http.NewRequest("GET", "https://api.github.com/repos/mrbonezy/wtx/releases/latest", nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "wtx")
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("unexpected status from GitHub: %s", resp.Status)
+	}
+	var info releaseInfo
+	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(info.TagName), nil
+}
+
+func compareSemver(current string, latest string) int {
+	c := parseSemver(current)
+	l := parseSemver(latest)
+	if c == nil || l == nil {
+		return strings.Compare(current, latest)
+	}
+	for i := 0; i < 3; i++ {
+		if c[i] > l[i] {
+			return 1
+		}
+		if c[i] < l[i] {
+			return -1
+		}
+	}
+	return 0
+}
+
+func parseSemver(value string) []int {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(value, "v")
+	parts := strings.Split(value, ".")
+	if len(parts) < 3 {
+		return nil
+	}
+	out := make([]int, 3)
+	for i := 0; i < 3; i++ {
+		n := 0
+		for _, ch := range parts[i] {
+			if ch < '0' || ch > '9' {
+				return nil
+			}
+			n = n*10 + int(ch-'0')
+		}
+		out[i] = n
+	}
+	return out
+}
+
+func versionString() string {
+	if version == "" {
+		return "wtx dev"
+	}
+	return fmt.Sprintf("wtx %s", version)
 }
