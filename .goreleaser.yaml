@@ -11,7 +11,7 @@ builds:
     main: .
     binary: wtx
     ldflags:
-      - -s -w -X main.version={{ .Commit }}
+      - -s -w -X main.version={{ .FullCommit }}
     goos:
       - darwin
       - linux
@@ -33,9 +33,8 @@ checksum:
   name_template: "checksums.txt"
 
 changelog:
-  skip: true
+  disable: true
 
 release:
-  tag: latest
   name_template: "latest"
   replace_existing_artifacts: true
