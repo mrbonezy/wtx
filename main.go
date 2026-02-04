@@ -1,8 +1,8 @@
 package main
 
 import (
-	"bytes"
 	"bufio"
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -193,6 +193,7 @@ type worktreeInfo struct {
 type worktreeOption struct {
 	Info      worktreeInfo
 	Available bool
+	Exists    bool
 }
 
 type selectionKind int
@@ -228,6 +229,7 @@ type menuItem struct {
 	Status     string
 	Path       string
 	LockID     string
+	Exists     bool
 }
 
 type actionItem struct {
@@ -324,11 +326,18 @@ func selectWorktree(info repoInfo) (*selectionResult, error) {
 
 		options := make([]worktreeOption, 0, len(worktrees))
 		for _, wt := range worktrees {
-			available, err := isWorktreeAvailable(info.Path, wt.Path)
+			exists, err := worktreePathExists(wt.Path)
 			if err != nil {
 				return nil, err
 			}
-			options = append(options, worktreeOption{Info: wt, Available: available})
+			available := false
+			if exists {
+				available, err = isWorktreeAvailable(info.Path, wt.Path)
+				if err != nil {
+					return nil, err
+				}
+			}
+			options = append(options, worktreeOption{Info: wt, Available: available, Exists: exists})
 		}
 
 		menuItems, err := buildMenuItems(info.Path, options)
@@ -365,7 +374,7 @@ func selectWorktree(info repoInfo) (*selectionResult, error) {
 			if lockErr != nil {
 				return nil, lockErr
 			}
-			action, err := promptWorktreeAction(chosen.Worktree, baseRef, canDelete, deleteReason, chosen.Available, lockInfo, lockFound)
+			action, err := promptWorktreeAction(chosen.Worktree, baseRef, canDelete, deleteReason, chosen.Available, chosen.Exists, lockInfo, lockFound)
 			if err != nil {
 				return nil, err
 			}
@@ -409,7 +418,19 @@ func selectWorktree(info repoInfo) (*selectionResult, error) {
 					return nil, err
 				}
 				if ok {
-					if err := deleteWorktree(info.Path, gitPath, chosen.Worktree.Path); err != nil {
+					if err := deleteWorktree(info.Path, gitPath, chosen.Worktree.Path, false); err != nil {
+						return nil, err
+					}
+				}
+				continue
+			}
+			if action == "remove_missing" {
+				ok, err := promptYesNo("Remove worktree (manually removed)? [y/N]: ")
+				if err != nil {
+					return nil, err
+				}
+				if ok {
+					if err := deleteWorktree(info.Path, gitPath, chosen.Worktree.Path, true); err != nil {
 						return nil, err
 					}
 				}
@@ -594,7 +615,9 @@ func buildMenuItems(repoRoot string, options []worktreeOption) ([]menuItem, erro
 		}
 		label := option.Info.Branch
 		status := "free"
-		if !option.Available {
+		if !option.Exists {
+			status = "manually removed"
+		} else if !option.Available {
 			status = "in use"
 		}
 		lastUsedText := "last used: " + lastUsedLabel
@@ -604,11 +627,12 @@ func buildMenuItems(repoRoot string, options []worktreeOption) ([]menuItem, erro
 			Worktree:   option.Info,
 			LastUsed:   lastUsedText,
 			LastUsedAt: lastUsedAt,
-			Available:  option.Available,
+			Available:  option.Available && option.Exists,
 			IsWorktree: true,
 			Status:     status,
 			Path:       option.Info.Path,
 			LockID:     lockID,
+			Exists:     option.Exists,
 		})
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -683,7 +707,7 @@ func promptSelectMenu(repoName string, items []menuItem) (menuItem, error) {
 	}
 }
 
-func promptWorktreeAction(wt worktreeInfo, baseRef string, allowDelete bool, deleteReason string, available bool, lockInfo lockPayloadData, lockFound bool) (string, error) {
+func promptWorktreeAction(wt worktreeInfo, baseRef string, allowDelete bool, deleteReason string, available bool, exists bool, lockInfo lockPayloadData, lockFound bool) (string, error) {
 	displayBase := shortRef(baseRef)
 	deleteLabel := "Delete worktree"
 	if !allowDelete && deleteReason != "" {
@@ -701,11 +725,14 @@ func promptWorktreeAction(wt worktreeInfo, baseRef string, allowDelete bool, del
 		{Kind: "use", Label: fmt.Sprintf("Use (%s)", wt.Branch), Disabled: !available},
 		{Kind: "use_new_branch", Label: fmt.Sprintf("Checkout new branch from (%s)", displayBase), Disabled: !available},
 		{Kind: "use_existing_branch", Label: "Choose an existing branch", Disabled: !available},
-		{Kind: "open_shell", Label: "Open shell here (no lock)"},
+		{Kind: "open_shell", Label: "Open shell here (no lock)", Disabled: !exists},
 		{Kind: "divider", Label: "──────────", Disabled: true},
-		{Kind: "delete", Label: deleteLabel, Disabled: !allowDelete || !available},
+		{Kind: "delete", Label: deleteLabel, Disabled: !allowDelete || !available || !exists},
 		{Kind: "force_unlock", Label: forceLabel, Disabled: available},
 		{Kind: "back", Label: "Back"},
+	}
+	if !exists {
+		items = append(items[:5], append([]actionItem{{Kind: "remove_missing", Label: "Remove worktree (manually removed)", Disabled: false}}, items[5:]...)...)
 	}
 
 	funcMap := template.FuncMap{}
@@ -777,8 +804,13 @@ func promptTaskTitle() (string, error) {
 	return value, nil
 }
 
-func deleteWorktree(repoRoot string, gitPath string, path string) error {
-	cmd := exec.Command(gitPath, "worktree", "remove", path)
+func deleteWorktree(repoRoot string, gitPath string, path string, force bool) error {
+	args := []string{"worktree", "remove"}
+	if force {
+		args = append(args, "--force")
+	}
+	args = append(args, path)
+	cmd := exec.Command(gitPath, args...)
 	cmd.Dir = repoRoot
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -847,6 +879,17 @@ func isNumeric(value string) bool {
 		}
 	}
 	return true
+}
+
+func worktreePathExists(path string) (bool, error) {
+	_, err := os.Stat(path)
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func writeLastUsed(repoRoot string, worktreePath string) error {
@@ -1267,7 +1310,7 @@ func worktreeID(repoRoot string, worktreePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	worktreeReal, err := realPath(worktreePath)
+	worktreeReal, err := realPathOrAbs(worktreePath)
 	if err != nil {
 		return "", err
 	}
@@ -1283,6 +1326,21 @@ func realPath(path string) (string, error) {
 		return "", err
 	}
 	return filepath.EvalSymlinks(abs)
+}
+
+func realPathOrAbs(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	real, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return abs, nil
+		}
+		return "", err
+	}
+	return real, nil
 }
 
 func hashString(value string) string {
