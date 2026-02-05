@@ -755,12 +755,13 @@ func renderSelector(status WorktreeStatus, cursor int, pendingByBranch map[strin
 	}
 	const (
 		branchWidth   = 40
-		prWidth       = 44
+		prWidth       = 12
+		prStateWidth  = 10
 		ciWidth       = 12
 		approvedWidth = 12
 	)
 	var b strings.Builder
-	header := formatSelectorLine("Branch", "PR", "CI", "Approved", branchWidth, prWidth, ciWidth, approvedWidth)
+	header := formatSelectorLine("Branch", "PR", "PR State", "CI", "Approved", branchWidth, prWidth, prStateWidth, ciWidth, approvedWidth)
 	b.WriteString(selectorHeaderStyle.Render("  " + header))
 	b.WriteString("\n")
 	orphaned := make(map[string]bool, len(status.Orphaned))
@@ -785,10 +786,12 @@ func renderSelector(status WorktreeStatus, cursor int, pendingByBranch map[strin
 		line := formatSelectorLine(
 			label,
 			formatPRLabel(wt, pending, loadingGlyph),
+			formatPRStatusLabel(wt, pending, loadingGlyph),
 			formatCILabel(wt, pending, loadingGlyph),
 			formatReviewLabel(wt, pending, loadingGlyph),
 			branchWidth,
 			prWidth,
+			prStateWidth,
 			ciWidth,
 			approvedWidth,
 		)
@@ -800,7 +803,7 @@ func renderSelector(status WorktreeStatus, cursor int, pendingByBranch map[strin
 		b.WriteString("\n")
 	}
 	createIdx := len(worktrees)
-	createLine := formatSelectorLine("+ New worktree", "", "", "", branchWidth, prWidth, ciWidth, approvedWidth)
+	createLine := formatSelectorLine("+ New worktree", "", "", "", "", branchWidth, prWidth, prStateWidth, ciWidth, approvedWidth)
 	if createIdx == cursor {
 		b.WriteString("  " + selectorSelectedStyle.Render(createLine))
 	} else {
@@ -809,9 +812,10 @@ func renderSelector(status WorktreeStatus, cursor int, pendingByBranch map[strin
 	return b.String()
 }
 
-func formatSelectorLine(branch string, pr string, ci string, approved string, branchWidth int, prWidth int, ciWidth int, approvedWidth int) string {
+func formatSelectorLine(branch string, pr string, prState string, ci string, approved string, branchWidth int, prWidth int, prStateWidth int, ciWidth int, approvedWidth int) string {
 	return padOrTrim(branch, branchWidth) + " " +
 		padOrTrim(pr, prWidth) + " " +
+		padOrTrim(prState, prStateWidth) + " " +
 		padOrTrim(ci, ciWidth) + " " +
 		padOrTrim(approved, approvedWidth)
 }
@@ -977,16 +981,29 @@ func formatPRLabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
 	if pending {
 		return loadingGlyph
 	}
-	if !wt.HasPR {
-		return "-"
-	}
-	if strings.TrimSpace(wt.PRURL) != "" {
-		return strings.TrimSpace(wt.PRURL)
-	}
-	if wt.PRNumber <= 0 {
+	if !wt.HasPR || wt.PRNumber <= 0 {
 		return "-"
 	}
 	return fmt.Sprintf("#%d", wt.PRNumber)
+}
+
+func formatPRStatusLabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
+	if pending {
+		return loadingGlyph
+	}
+	if !wt.HasPR {
+		return "-"
+	}
+	status := strings.TrimSpace(strings.ToLower(wt.PRStatus))
+	if status == "" {
+		return "-"
+	}
+	switch status {
+	case "open", "closed", "merged":
+		return status
+	default:
+		return "-"
+	}
 }
 
 func formatCILabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
@@ -1184,6 +1201,7 @@ func applyPRDataToStatus(status *WorktreeStatus, byBranch map[string]PRData) {
 		status.Worktrees[i].HasPR = false
 		status.Worktrees[i].PRNumber = 0
 		status.Worktrees[i].PRURL = ""
+		status.Worktrees[i].PRStatus = ""
 		status.Worktrees[i].CIState = PRCINone
 		status.Worktrees[i].CIDone = 0
 		status.Worktrees[i].CITotal = 0
@@ -1196,6 +1214,7 @@ func applyPRDataToStatus(status *WorktreeStatus, byBranch map[string]PRData) {
 			status.Worktrees[i].HasPR = true
 			status.Worktrees[i].PRNumber = pr.Number
 			status.Worktrees[i].PRURL = pr.URL
+			status.Worktrees[i].PRStatus = pr.Status
 			status.Worktrees[i].CIState = pr.CIState
 			status.Worktrees[i].CIDone = pr.CICompleted
 			status.Worktrees[i].CITotal = pr.CITotal

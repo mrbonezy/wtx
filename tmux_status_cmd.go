@@ -151,7 +151,13 @@ func prLabel(pr PRData) string {
 	if pr.Number <= 0 {
 		return "-"
 	}
-	return fmt.Sprintf("#%d", pr.Number)
+	status := strings.TrimSpace(strings.ToLower(pr.Status))
+	switch status {
+	case "open", "closed", "merged":
+		return fmt.Sprintf("#%d(%s)", pr.Number, status)
+	default:
+		return fmt.Sprintf("#%d", pr.Number)
+	}
 }
 
 func ciLabel(pr PRData) string {

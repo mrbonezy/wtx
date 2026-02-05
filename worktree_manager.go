@@ -16,6 +16,7 @@ type WorktreeInfo struct {
 	PRURL              string
 	PRNumber           int
 	HasPR              bool
+	PRStatus           string
 	CIState            PRCIState
 	CIDone             int
 	CITotal            int

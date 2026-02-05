@@ -24,6 +24,7 @@ type PRData struct {
 	Number             int
 	URL                string
 	Branch             string
+	Status             string
 	ReviewDecision     string
 	Approved           bool
 	UnresolvedComments int
@@ -47,6 +48,9 @@ type ghPR struct {
 	Number            int       `json:"number"`
 	URL               string    `json:"url"`
 	HeadRefName       string    `json:"headRefName"`
+	State             string    `json:"state"`
+	UpdatedAt         string    `json:"updatedAt"`
+	MergedAt          string    `json:"mergedAt"`
 	ReviewDecision    string    `json:"reviewDecision"`
 	StatusCheckRollup []ghCheck `json:"statusCheckRollup"`
 }
@@ -125,7 +129,7 @@ func (m *GHManager) fetchRepoPRData(repoRoot string, branches []string) (map[str
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.Command(ghPath, "pr", "list", "--state", "open", "--json", "number,url,headRefName,reviewDecision,statusCheckRollup", "--limit", "200")
+	cmd := exec.Command(ghPath, "pr", "list", "--state", "all", "--json", "number,url,headRefName,state,updatedAt,mergedAt,reviewDecision,statusCheckRollup", "--limit", "200")
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -148,9 +152,14 @@ func (m *GHManager) fetchRepoPRData(repoRoot string, branches []string) (map[str
 		wanted[strings.TrimSpace(b)] = true
 	}
 	result := make(map[string]PRData, len(prs))
+	latestUpdated := make(map[string]time.Time, len(prs))
 	for _, pr := range prs {
 		branch := strings.TrimSpace(pr.HeadRefName)
 		if branch == "" || !wanted[branch] {
+			continue
+		}
+		updatedAt := parseGitHubTime(pr.UpdatedAt)
+		if t, ok := latestUpdated[branch]; ok && !updatedAt.After(t) {
 			continue
 		}
 		ciState, ciDone, ciTotal := summarizeCI(pr.StatusCheckRollup)
@@ -158,6 +167,7 @@ func (m *GHManager) fetchRepoPRData(repoRoot string, branches []string) (map[str
 			Number:         pr.Number,
 			URL:            strings.TrimSpace(pr.URL),
 			Branch:         branch,
+			Status:         normalizePRStatus(pr.State, pr.MergedAt),
 			ReviewDecision: strings.TrimSpace(pr.ReviewDecision),
 			Approved:       strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"),
 			CIState:        ciState,
@@ -169,9 +179,38 @@ func (m *GHManager) fetchRepoPRData(repoRoot string, branches []string) (map[str
 				data.UnresolvedComments = unresolved
 			}
 		}
+		latestUpdated[branch] = updatedAt
 		result[branch] = data
 	}
 	return result, nil
+}
+
+func parseGitHubTime(value string) time.Time {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return time.Time{}
+	}
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}
+	}
+	return t
+}
+
+func normalizePRStatus(state string, mergedAt string) string {
+	if strings.TrimSpace(mergedAt) != "" {
+		return "merged"
+	}
+	switch strings.ToUpper(strings.TrimSpace(state)) {
+	case "OPEN":
+		return "open"
+	case "CLOSED":
+		return "closed"
+	case "MERGED":
+		return "merged"
+	default:
+		return "-"
+	}
 }
 
 func summarizeCI(checks []ghCheck) (PRCIState, int, int) {
