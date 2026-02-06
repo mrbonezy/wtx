@@ -13,6 +13,9 @@ type WorktreeInfo struct {
 	CIDone             int
 	CITotal            int
 	Approved           bool
+	ReviewApproved     int
+	ReviewRequired     int
+	ReviewKnown        bool
 	UnresolvedComments int
 }
 

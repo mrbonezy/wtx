@@ -81,13 +81,13 @@ func formatPRLine(number string, branch string, title string, ci string, approva
 		PadOrTrim(status, statusWidth)
 }
 
-func BuildPRRow(number int, branch string, title string, ciDone int, ciTotal int, ciState string, approved bool, reviewDecision string, status string) PRRow {
+func BuildPRRow(number int, branch string, title string, ciDone int, ciTotal int, ciState string, reviewApproved int, reviewRequired int, reviewKnown bool, status string) PRRow {
 	return PRRow{
 		NumberLabel:   fmt.Sprintf("#%d", number),
 		Branch:        branch,
 		Title:         title,
 		CILabel:       formatPRListCI(ciDone, ciTotal, ciState),
-		ApprovalLabel: formatPRListApproval(approved, reviewDecision),
+		ApprovalLabel: formatPRListApproval(reviewApproved, reviewRequired, reviewKnown),
 		StatusLabel:   formatPRListStatus(status),
 		Inactive:      isInactivePRStatus(status),
 	}
@@ -109,18 +109,14 @@ func formatPRListCI(ciDone int, ciTotal int, ciState string) string {
 	}
 }
 
-func formatPRListApproval(approved bool, reviewDecision string) string {
-	if approved {
-		return "approved"
+func formatPRListApproval(reviewApproved int, reviewRequired int, reviewKnown bool) string {
+	if reviewRequired > 0 {
+		return fmt.Sprintf("%d/%d", reviewApproved, reviewRequired)
 	}
-	switch strings.ToLower(strings.TrimSpace(reviewDecision)) {
-	case "changes_requested":
-		return "changes_requested"
-	case "review_required":
-		return "review_required"
-	default:
-		return "-"
+	if reviewKnown && reviewApproved > 0 {
+		return "1/1"
 	}
+	return "-"
 }
 
 func formatPRListStatus(status string) string {
