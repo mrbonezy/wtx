@@ -298,7 +298,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					if m.actionIndex == 1 {
-						options, err := availableBranchOptions(m.status, m.mgr)
+						options, err := availableBranchOptions(m.status, m.mgr, true)
 						if err != nil {
 							m.errMsg = err.Error()
 							return m, nil
@@ -320,7 +320,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					return m, nil
 				}
 				if m.actionIndex == 2 {
-					options, err := availableBranchOptions(m.status, m.mgr)
+					options, err := availableBranchOptions(m.status, m.mgr, false)
 					if err != nil {
 						m.errMsg = err.Error()
 						return m, nil
@@ -392,6 +392,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					branch, ok := selectedBranch(m.branchSuggestions, m.branchIndex)
 					if !ok {
 						m.errMsg = "Select an existing branch."
+						return m, nil
+					}
+					if wt, reusable, reason := reusableWorktreeForBranch(m.status, branch); reusable {
+						lock, err := m.mgr.AcquireWorktreeLock(wt.Path)
+						if err != nil {
+							m.errMsg = err.Error()
+							return m, nil
+						}
+						m.errMsg = ""
+						m.warnMsg = ""
+						m.pendingPath = wt.Path
+						m.pendingBranch = wt.Branch
+						m.pendingOpenShell = false
+						m.pendingLock = lock
+						return m, tea.Quit
+					} else if reason != "" {
+						m.errMsg = reason
 						return m, nil
 					}
 					m.mode = modeCreating
@@ -1240,7 +1257,9 @@ func filterBranches(options []string, query string) []string {
 	return out
 }
 
-func availableBranchOptions(status WorktreeStatus, mgr *WorktreeManager) ([]string, error) {
+const maxBranchSuggestions = 15
+
+func availableBranchOptions(status WorktreeStatus, mgr *WorktreeManager, includeInUse bool) ([]string, error) {
 	options, err := mgr.ListLocalBranchesByRecentUse()
 	if err != nil {
 		return nil, err
@@ -1255,15 +1274,49 @@ func availableBranchOptions(status WorktreeStatus, mgr *WorktreeManager) ([]stri
 	}
 	filtered := make([]string, 0, len(options))
 	for _, opt := range options {
-		if inUse[opt] {
+		if !includeInUse && inUse[opt] {
 			continue
 		}
 		filtered = append(filtered, opt)
 	}
+	if len(filtered) > maxBranchSuggestions {
+		filtered = filtered[:maxBranchSuggestions]
+	}
 	if len(filtered) == 0 {
+		if includeInUse {
+			return nil, fmt.Errorf("no local branches found")
+		}
 		return nil, fmt.Errorf("no available branches (all branches currently in use)")
 	}
 	return filtered, nil
+}
+
+func reusableWorktreeForBranch(status WorktreeStatus, branch string) (WorktreeInfo, bool, string) {
+	branch = strings.TrimSpace(branch)
+	if branch == "" || !status.InRepo {
+		return WorktreeInfo{}, false, ""
+	}
+	orphaned := make(map[string]bool, len(status.Orphaned))
+	for _, wt := range status.Orphaned {
+		orphaned[wt.Path] = true
+	}
+	foundUnavailable := false
+	for _, wt := range worktreesForDisplay(status) {
+		if strings.TrimSpace(wt.Branch) != branch {
+			continue
+		}
+		if orphaned[wt.Path] {
+			return WorktreeInfo{}, false, "Branch has an orphaned worktree. Remove it before reuse."
+		}
+		if wt.Available {
+			return wt, true, ""
+		}
+		foundUnavailable = true
+	}
+	if foundUnavailable {
+		return WorktreeInfo{}, false, "Branch already has a worktree in use."
+	}
+	return WorktreeInfo{}, false, ""
 }
 
 func selectedBranch(suggestions []string, index int) (string, bool) {

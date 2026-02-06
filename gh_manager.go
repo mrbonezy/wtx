@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,6 +20,14 @@ const (
 	PRCIInProgress PRCIState = "in_progress"
 	PRCIFail       PRCIState = "fail"
 	PRCISuccess    PRCIState = "success"
+
+	ghPRListFullTimeout      = 30 * time.Second
+	ghPRListFallbackTimeout  = 20 * time.Second
+	ghUnresolvedPRTimeout    = 4 * time.Second
+	maxUnresolvedPRLookups   = 25
+	fullPRListFields         = "number,url,headRefName,title,isDraft,state,updatedAt,mergedAt,reviewDecision,statusCheckRollup"
+	fallbackPRListFields     = "number,url,headRefName,title,isDraft,state,updatedAt,mergedAt,reviewDecision"
+	defaultPRListFetchLimit  = "200"
 )
 
 type PRData struct {
@@ -162,27 +171,13 @@ func (m *GHManager) fetchRepoPRData(repoRoot string) (map[string]PRData, []PRLis
 	if err != nil {
 		return nil, nil, err
 	}
-	cmd := exec.Command(
-		ghPath,
-		"pr",
-		"list",
-		"--state", "all",
-		"--author", "@me",
-		"--json", "number,url,headRefName,title,isDraft,state,updatedAt,mergedAt,reviewDecision,statusCheckRollup",
-		"--limit", "200",
-	)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
+	prs, err := ghPRList(ghPath, repoRoot, fullPRListFields, ghPRListFullTimeout)
 	if err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
+		// Large monorepos can fail this heavier query; retry once with a slimmer field set.
+		prs, err = ghPRList(ghPath, repoRoot, fallbackPRListFields, ghPRListFallbackTimeout)
+		if err != nil {
 			return nil, nil, err
 		}
-		return nil, nil, fmt.Errorf("%w: %s", err, msg)
-	}
-	var prs []ghPR
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, nil, err
 	}
 	owner, name, err := resolveGitHubRepo(repoRoot)
 	if err != nil {
@@ -191,6 +186,7 @@ func (m *GHManager) fetchRepoPRData(repoRoot string) (map[string]PRData, []PRLis
 	result := make(map[string]PRData, len(prs))
 	latestUpdated := make(map[string]time.Time, len(prs))
 	prList := make([]PRListData, 0, len(prs))
+	unresolvedLookups := 0
 	for _, pr := range prs {
 		branch := strings.TrimSpace(pr.HeadRefName)
 		if branch == "" {
@@ -210,7 +206,10 @@ func (m *GHManager) fetchRepoPRData(repoRoot string) (map[string]PRData, []PRLis
 			CICompleted:    ciDone,
 			CITotal:        ciTotal,
 		}
-		if (status == "open" || status == "draft") && owner != "" && name != "" && pr.Number > 0 {
+		if unresolvedLookups < maxUnresolvedPRLookups &&
+			(status == "open" || status == "draft") &&
+			owner != "" && name != "" && pr.Number > 0 {
+			unresolvedLookups++
 			if unresolved, uerr := unresolvedCommentsForPR(ghPath, repoRoot, owner, name, pr.Number); uerr == nil {
 				data.UnresolvedComments = unresolved
 			}
@@ -237,6 +236,39 @@ func (m *GHManager) fetchRepoPRData(repoRoot string) (map[string]PRData, []PRLis
 		return prList[i].UpdatedAt.After(prList[j].UpdatedAt)
 	})
 	return result, prList, nil
+}
+
+func ghPRList(ghPath string, repoRoot string, fields string, timeout time.Duration) ([]ghPR, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		ctx,
+		ghPath,
+		"pr",
+		"list",
+		"--state", "all",
+		"--author", "@me",
+		"--json", fields,
+		"--limit", defaultPRListFetchLimit,
+	)
+	cmd.Dir = repoRoot
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return nil, fmt.Errorf("gh pr list timed out after %s", timeout.Round(time.Second))
+		}
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %s", err, msg)
+	}
+	var prs []ghPR
+	if err := json.Unmarshal(out, &prs); err != nil {
+		return nil, err
+	}
+	return prs, nil
 }
 
 func parseGitHubTime(value string) time.Time {
@@ -317,10 +349,15 @@ func unresolvedCommentsForPR(ghPath string, repoRoot string, owner string, name 
 		return 0, errors.New("repo/number required")
 	}
 	query := `query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved}}}}}`
-	cmd := exec.Command(ghPath, "api", "graphql", "-f", "query="+query, "-F", "owner="+owner, "-F", "name="+name, "-F", fmt.Sprintf("number=%d", number))
+	ctx, cancel := context.WithTimeout(context.Background(), ghUnresolvedPRTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, ghPath, "api", "graphql", "-f", "query="+query, "-F", "owner="+owner, "-F", "name="+name, "-F", fmt.Sprintf("number=%d", number))
 	cmd.Dir = repoRoot
 	out, err := cmd.Output()
 	if err != nil {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return 0, fmt.Errorf("gh api graphql timed out after %s", ghUnresolvedPRTimeout.Round(time.Second))
+		}
 		return 0, err
 	}
 	var resp ghReviewThreadsResp
