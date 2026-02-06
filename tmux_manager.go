@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -298,13 +300,165 @@ func resolveStatusCommandBinary() string {
 			return v
 		}
 	}
-	if p, err := exec.LookPath("wtx"); err == nil && strings.TrimSpace(p) != "" {
-		return p
-	}
 	if p, err := os.Executable(); err == nil && strings.TrimSpace(p) != "" && fileLooksExecutable(p) {
 		return p
 	}
+	if p, err := exec.LookPath("wtx"); err == nil && strings.TrimSpace(p) != "" && fileLooksExecutable(p) {
+		return p
+	}
 	return ""
+}
+
+func resolveAgentLifecycleBinary() string {
+	candidates := make([]string, 0, 3)
+	if p, err := os.Executable(); err == nil && strings.TrimSpace(p) != "" && fileLooksExecutable(p) {
+		candidates = append(candidates, p)
+	}
+	if v := strings.TrimSpace(os.Getenv("WTX_STATUS_BIN")); v != "" && fileLooksExecutable(v) {
+		candidates = append(candidates, v)
+	}
+	if p, err := exec.LookPath("wtx"); err == nil && strings.TrimSpace(p) != "" && fileLooksExecutable(p) {
+		candidates = append(candidates, p)
+	}
+	for _, candidate := range candidates {
+		if supportsTmuxAgentLifecycle(candidate) {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func supportsTmuxAgentLifecycle(bin string) bool {
+	bin = strings.TrimSpace(bin)
+	if bin == "" {
+		return false
+	}
+	cmd := exec.Command(bin, "tmux-agent-start")
+	cmd.Stdout = io.Discard
+	cmd.Stderr = io.Discard
+	return cmd.Run() == nil
+}
+
+type tmuxAgentState struct {
+	State        string `json:"state"`
+	ExitCode     int    `json:"exit_code"`
+	ExitedAtUnix int64  `json:"exited_at_unix"`
+}
+
+func runTmuxAgentStart(args []string) error {
+	worktreePath := parseWorktreeArg(args)
+	if strings.TrimSpace(worktreePath) == "" {
+		return nil
+	}
+	return writeTmuxAgentState(worktreePath, tmuxAgentState{
+		State:        "running",
+		ExitCode:     0,
+		ExitedAtUnix: 0,
+	})
+}
+
+func runTmuxAgentExit(args []string) error {
+	worktreePath := parseWorktreeArg(args)
+	if strings.TrimSpace(worktreePath) == "" {
+		return nil
+	}
+	exitCode := parseIntArg(args, "--code", 0)
+	if _, repoRoot, err := requireGitContext(worktreePath); err == nil && strings.TrimSpace(repoRoot) != "" {
+		_ = NewLockManager().ReleaseIfOwned(repoRoot, worktreePath)
+	}
+	return writeTmuxAgentState(worktreePath, tmuxAgentState{
+		State:        "exited",
+		ExitCode:     exitCode,
+		ExitedAtUnix: time.Now().Unix(),
+	})
+}
+
+func parseIntArg(args []string, key string, fallback int) int {
+	for i := 0; i < len(args); i++ {
+		if args[i] != key || i+1 >= len(args) {
+			continue
+		}
+		value := strings.TrimSpace(args[i+1])
+		if value == "" {
+			return fallback
+		}
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			return fallback
+		}
+		return parsed
+	}
+	return fallback
+}
+
+func tmuxAgentSummary(worktreePath string) string {
+	state, ok := readTmuxAgentState(worktreePath)
+	if !ok {
+		return ""
+	}
+	if strings.EqualFold(strings.TrimSpace(state.State), "exited") {
+		return "Agent exited (" + strconv.Itoa(state.ExitCode) + ")"
+	}
+	return ""
+}
+
+func readTmuxAgentState(worktreePath string) (tmuxAgentState, bool) {
+	path, err := tmuxAgentStatePath(worktreePath)
+	if err != nil {
+		return tmuxAgentState{}, false
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return tmuxAgentState{}, false
+	}
+	var state tmuxAgentState
+	if err := json.Unmarshal(data, &state); err != nil {
+		return tmuxAgentState{}, false
+	}
+	return state, true
+}
+
+func writeTmuxAgentState(worktreePath string, state tmuxAgentState) error {
+	path, err := tmuxAgentStatePath(worktreePath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(state)
+	if err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, payload, 0o644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
+func tmuxAgentStatePath(worktreePath string) (string, error) {
+	worktreePath = strings.TrimSpace(worktreePath)
+	if worktreePath == "" {
+		return "", os.ErrInvalid
+	}
+	gitPath, err := gitPath()
+	if err != nil {
+		return "", err
+	}
+	repoRoot, err := repoRootForDir(worktreePath, gitPath)
+	if err != nil {
+		return "", err
+	}
+	worktreeID, err := worktreeID(repoRoot, worktreePath)
+	if err != nil {
+		return "", err
+	}
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		return "", os.ErrNotExist
+	}
+	return filepath.Join(home, ".wtx", "agent-state", worktreeID+".json"), nil
 }
 
 func fileLooksExecutable(path string) bool {

@@ -51,10 +51,36 @@ func (m *WorktreeManager) ListForStatusBase() WorktreeStatus {
 	return status
 }
 
-func (m *WorktreeManager) CreateWorktree(branch string) (WorktreeInfo, error) {
+func (m *WorktreeManager) ResolveBaseRefForNewBranch() string {
+	gitPath, repoRoot, err := requireGitContext(m.cwd)
+	if err != nil {
+		return "main"
+	}
+	// Best effort refresh to make origin/HEAD and remote default-branch metadata current.
+	if err := gitRunInDir(repoRoot, gitPath, "fetch", "--quiet", "origin"); err != nil {
+		_ = gitRunInDir(repoRoot, gitPath, "fetch", "--quiet")
+	}
+	if ghRef, err := defaultBaseRefFromGitHub(repoRoot); err == nil && strings.TrimSpace(ghRef) != "" {
+		if remoteRef, ok := asOriginRemoteRef(repoRoot, gitPath, ghRef); ok {
+			return remoteRef
+		}
+		return strings.TrimSpace(ghRef)
+	}
+	ref := defaultBaseRef(repoRoot, gitPath)
+	if ref != "" && ref != "HEAD" {
+		return ref
+	}
+	return "main"
+}
+
+func (m *WorktreeManager) CreateWorktree(branch string, baseRef string) (WorktreeInfo, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		return WorktreeInfo{}, errors.New("branch name required")
+	}
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" {
+		baseRef = "HEAD"
 	}
 
 	gitPath, repoRoot, err := requireGitContext(m.cwd)
@@ -73,7 +99,7 @@ func (m *WorktreeManager) CreateWorktree(branch string) (WorktreeInfo, error) {
 	}
 	defer lock.Release()
 
-	cmd := exec.Command(gitPath, "worktree", "add", "-b", branch, target, "HEAD")
+	cmd := exec.Command(gitPath, "worktree", "add", "-b", branch, target, baseRef)
 	cmd.Dir = layoutRoot
 	if err := cmd.Run(); err != nil {
 		return WorktreeInfo{}, err
@@ -294,16 +320,55 @@ func gitOutputInDir(dir string, path string, args ...string) (string, error) {
 	return strings.TrimSpace(string(output)), nil
 }
 
+func gitRunInDir(dir string, path string, args ...string) error {
+	cmd := exec.Command(path, args...)
+	cmd.Dir = dir
+	return cmd.Run()
+}
+
 func defaultBaseRef(repoRoot string, gitPath string) string {
 	ref, err := gitOutputInDir(repoRoot, gitPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
 	if err == nil && ref != "" {
 		return ref
 	}
-	ref, err = gitOutputInDir(repoRoot, gitPath, "symbolic-ref", "--short", "HEAD")
-	if err == nil && ref != "" {
-		return ref
-	}
 	return "main"
+}
+
+func defaultBaseRefFromGitHub(repoRoot string) (string, error) {
+	owner, name, err := resolveGitHubRepo(repoRoot)
+	if err != nil {
+		return "", err
+	}
+	ghPath, err := exec.LookPath("gh")
+	if err != nil {
+		return "", err
+	}
+	cmd := exec.Command(ghPath, "repo", "view", owner+"/"+name, "--json", "defaultBranchRef", "--jq", ".defaultBranchRef.name")
+	cmd.Dir = repoRoot
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	ref := strings.TrimSpace(string(out))
+	if ref == "" {
+		return "", errors.New("github default branch not found")
+	}
+	return ref, nil
+}
+
+func asOriginRemoteRef(repoRoot string, gitPath string, ref string) (string, bool) {
+	ref = strings.TrimSpace(ref)
+	if ref == "" {
+		return "", false
+	}
+	if strings.HasPrefix(ref, "origin/") {
+		return ref, true
+	}
+	remote := "origin/" + ref
+	if _, err := gitOutputInDir(repoRoot, gitPath, "show-ref", "--verify", "refs/remotes/"+remote); err == nil {
+		return remote, true
+	}
+	return "", false
 }
 
 func worktreePathExists(path string) (bool, error) {

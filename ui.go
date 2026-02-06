@@ -42,6 +42,7 @@ type model struct {
 	actionBranch      string
 	actionIndex       int
 	actionCreate      bool
+	baseRefRefreshing bool
 	branchOptions     []string
 	branchSuggestions []string
 	branchIndex       int
@@ -149,9 +150,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		m.autoActionPath = strings.TrimSpace(msg.created.Path)
 		return m, fetchStatusCmd(m.orchestrator)
+	case baseRefResolvedMsg:
+		m.baseRefRefreshing = false
+		ref := strings.TrimSpace(msg.baseRef)
+		if ref != "" {
+			m.status.BaseRef = ref
+		}
+		return m, nil
 	case spinner.TickMsg:
 		cmds := make([]tea.Cmd, 0, 2)
-		if m.mode == modeCreating {
+		if m.mode == modeCreating || m.baseRefRefreshing {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			if cmd != nil {
@@ -247,7 +255,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = ""
 				return m, tea.Batch(
 					m.spinner.Tick,
-					createWorktreeCmd(m.mgr, branch),
+					createWorktreeCmd(m.mgr, branch, m.status.BaseRef),
 				)
 			}
 			var cmd tea.Cmd
@@ -454,8 +462,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionCreate = true
 				m.actionBranch = ""
 				m.actionIndex = 0
+				m.baseRefRefreshing = true
 				m.errMsg = ""
-				return m, nil
+				return m, tea.Batch(m.spinner.Tick, refreshBaseRefCmd(m.mgr))
 			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if isOrphanedPath(m.status, row.Path) {
@@ -470,8 +479,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionCreate = false
 				m.actionBranch = row.Branch
 				m.actionIndex = 0
+				m.baseRefRefreshing = true
 				m.errMsg = ""
-				return m, nil
+				return m, tea.Batch(m.spinner.Tick, refreshBaseRefCmd(m.mgr))
 			}
 		case "s":
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
@@ -565,6 +575,9 @@ func (m model) View() string {
 			title = "New worktree actions:"
 		}
 		b.WriteString(title + "\n")
+			if m.baseRefRefreshing {
+				b.WriteString("  " + secondaryStyle.Render(m.spinner.View()+" Refreshing base branch...") + "\n")
+			}
 		for i, item := range currentActionItems(m.actionBranch, m.status.BaseRef, m.actionCreate) {
 			line := "  " + actionNormalStyle.Render(item)
 			if i == m.actionIndex {
@@ -706,6 +719,9 @@ type ghDataMsg struct {
 	byBranch map[string]PRData
 	err      error
 }
+type baseRefResolvedMsg struct {
+	baseRef string
+}
 type createWorktreeDoneMsg struct {
 	created WorktreeInfo
 	err     error
@@ -746,9 +762,9 @@ func fetchGHDataCmd(orchestrator *WorktreeOrchestrator, status WorktreeStatus, k
 	}
 }
 
-func createWorktreeCmd(mgr *WorktreeManager, branch string) tea.Cmd {
+func createWorktreeCmd(mgr *WorktreeManager, branch string, baseRef string) tea.Cmd {
 	return func() tea.Msg {
-		created, err := mgr.CreateWorktree(branch)
+		created, err := mgr.CreateWorktree(branch, baseRef)
 		return createWorktreeDoneMsg{created: created, err: err}
 	}
 }
@@ -757,6 +773,15 @@ func createWorktreeFromExistingCmd(mgr *WorktreeManager, branch string) tea.Cmd 
 	return func() tea.Msg {
 		created, err := mgr.CreateWorktreeFromBranch(branch)
 		return createWorktreeDoneMsg{created: created, err: err}
+	}
+}
+
+func refreshBaseRefCmd(mgr *WorktreeManager) tea.Cmd {
+	return func() tea.Msg {
+		if mgr == nil {
+			return baseRefResolvedMsg{baseRef: "main"}
+		}
+		return baseRefResolvedMsg{baseRef: mgr.ResolveBaseRefForNewBranch()}
 	}
 }
 
@@ -1206,6 +1231,13 @@ func worktreesForDisplay(status WorktreeStatus) []WorktreeInfo {
 		jFree := out[j].Available && !orphaned[out[j].Path]
 		if iFree != jFree {
 			return iFree
+		}
+		if iFree && jFree {
+			iLastUsed := out[i].LastUsedUnix
+			jLastUsed := out[j].LastUsedUnix
+			if iLastUsed != jLastUsed {
+				return iLastUsed > jLastUsed
+			}
 		}
 		iBranch := strings.ToLower(strings.TrimSpace(out[i].Branch))
 		jBranch := strings.ToLower(strings.TrimSpace(out[j].Branch))

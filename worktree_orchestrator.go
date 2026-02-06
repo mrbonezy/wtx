@@ -33,12 +33,14 @@ func (o *WorktreeOrchestrator) Status() WorktreeStatus {
 			for i := range status.Worktrees {
 				if status.Worktrees[i].Path == wt.Path {
 					status.Worktrees[i].Available = false
+					status.Worktrees[i].LastUsedUnix = 0
 					break
 				}
 			}
 			orphaned = append(orphaned, wt)
 			continue
 		}
+		lastUsed := worktreeLastUsedUnix(status.RepoRoot, wt.Path)
 		available, err := o.lockMgr.IsAvailable(status.RepoRoot, wt.Path)
 		if err != nil {
 			status.Err = err
@@ -47,6 +49,7 @@ func (o *WorktreeOrchestrator) Status() WorktreeStatus {
 		for i := range status.Worktrees {
 			if status.Worktrees[i].Path == wt.Path {
 				status.Worktrees[i].Available = available
+				status.Worktrees[i].LastUsedUnix = lastUsed
 				break
 			}
 		}

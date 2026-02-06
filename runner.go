@@ -63,7 +63,7 @@ func (r *Runner) runInWorktree(worktreePath string, branch string, lock *Worktre
 
 func (r *Runner) runInTmux(worktreePath string, branch string, lock *WorktreeLock, openShell bool, runCmd string) (RunResult, error) {
 	paneID, _ := currentPaneID()
-	newPaneID, err := splitCommandPane(worktreePath, commandToRun(openShell, runCmd))
+	newPaneID, err := splitCommandPane(worktreePath, commandToRunInTmux(worktreePath, openShell, runCmd))
 	if err != nil {
 		return RunResult{}, err
 	}
@@ -123,6 +123,22 @@ func commandToRun(openShell bool, runCmd string) string {
 		return loginShellCommand
 	}
 	return runCmd
+}
+
+func commandToRunInTmux(worktreePath string, openShell bool, runCmd string) string {
+	if openShell {
+		return loginShellCommand
+	}
+	bin := strings.TrimSpace(resolveAgentLifecycleBinary())
+	if bin == "" {
+		return runCmd + "; exec \"${SHELL:-/bin/sh}\" -l"
+	}
+	startCmd := shellQuote(bin) + " tmux-agent-start --worktree " + shellQuote(worktreePath)
+	exitCmd := shellQuote(bin) + " tmux-agent-exit --worktree " + shellQuote(worktreePath)
+	return startCmd + "; " +
+		"finish(){ code=\"$1\"; " + exitCmd + " --code \"$code\"; exec \"${SHELL:-/bin/sh}\" -l; }; " +
+		"trap 'finish 130' INT TERM; " +
+		runCmd + "; code=$?; trap - INT TERM; finish \"$code\""
 }
 
 func activateWorktreeUI(worktreePath string, branch string) {
