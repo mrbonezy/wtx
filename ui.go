@@ -979,9 +979,12 @@ func renderPRSelector(prs []PRListData, cursor int, loading bool, loadingGlyph s
 			pr.CICompleted,
 			pr.CITotal,
 			string(pr.CIState),
+			pr.CIFailingNames,
 			pr.ReviewApproved,
 			pr.ReviewRequired,
 			pr.ReviewKnown,
+			pr.ResolvedComments,
+			pr.CommentThreadsTotal,
 			pr.Status,
 		)
 		if cellLoading {
@@ -1042,6 +1045,9 @@ func prSearchHaystack(pr PRListData) string {
 		pr.ReviewDecision,
 		string(pr.CIState),
 		fmt.Sprintf("%d/%d", pr.CICompleted, pr.CITotal),
+		pr.CIFailingNames,
+		fmt.Sprintf("%d", pr.ResolvedComments),
+		fmt.Sprintf("%d", pr.CommentThreadsTotal),
 		pr.URL,
 	}, " "))
 }
@@ -1214,6 +1220,7 @@ func renderSelector(status WorktreeStatus, cursor int, pendingByBranch map[strin
 			PRLabel:       formatPRLabel(wt, pending, loadingGlyph),
 			CILabel:       formatCILabel(wt, pending, loadingGlyph),
 			ReviewLabel:   formatReviewLabel(wt, pending, loadingGlyph),
+			CommentsLabel: formatCommentsLabel(wt, pending, loadingGlyph),
 			PRStatusLabel: formatPRStatusLabel(wt, pending, loadingGlyph),
 			Disabled:      disabled,
 		})
@@ -1447,12 +1454,32 @@ func formatCILabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
 	case PRCISuccess:
 		return fmt.Sprintf("✓ %d/%d", wt.CIDone, wt.CITotal)
 	case PRCIFail:
+		if names := strings.TrimSpace(wt.CIFailingNames); names != "" {
+			return fmt.Sprintf("✗ %d/%d %s", wt.CIDone, wt.CITotal, names)
+		}
 		return fmt.Sprintf("✗ %d/%d", wt.CIDone, wt.CITotal)
 	case PRCIInProgress:
 		return fmt.Sprintf("… %d/%d", wt.CIDone, wt.CITotal)
 	default:
 		return "-"
 	}
+}
+
+func formatCommentsLabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
+	if pending {
+		return loadingGlyph
+	}
+	if !wt.HasPR || wt.CommentThreadsTotal <= 0 {
+		return "-"
+	}
+	resolved := wt.ResolvedComments
+	if resolved < 0 {
+		resolved = 0
+	}
+	if resolved > wt.CommentThreadsTotal {
+		resolved = wt.CommentThreadsTotal
+	}
+	return fmt.Sprintf("(%d/%d)", resolved, wt.CommentThreadsTotal)
 }
 
 func formatReviewLabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
@@ -1677,11 +1704,14 @@ func applyPRDataToStatus(status *WorktreeStatus, byBranch map[string]PRData) {
 		status.Worktrees[i].CIState = PRCINone
 		status.Worktrees[i].CIDone = 0
 		status.Worktrees[i].CITotal = 0
+		status.Worktrees[i].CIFailingNames = ""
 		status.Worktrees[i].Approved = false
 		status.Worktrees[i].ReviewApproved = 0
 		status.Worktrees[i].ReviewRequired = 0
 		status.Worktrees[i].ReviewKnown = false
 		status.Worktrees[i].UnresolvedComments = 0
+		status.Worktrees[i].ResolvedComments = 0
+		status.Worktrees[i].CommentThreadsTotal = 0
 		if b == "" {
 			continue
 		}
@@ -1693,11 +1723,14 @@ func applyPRDataToStatus(status *WorktreeStatus, byBranch map[string]PRData) {
 			status.Worktrees[i].CIState = pr.CIState
 			status.Worktrees[i].CIDone = pr.CICompleted
 			status.Worktrees[i].CITotal = pr.CITotal
+			status.Worktrees[i].CIFailingNames = pr.CIFailingNames
 			status.Worktrees[i].Approved = pr.Approved
 			status.Worktrees[i].ReviewApproved = pr.ReviewApproved
 			status.Worktrees[i].ReviewRequired = pr.ReviewRequired
 			status.Worktrees[i].ReviewKnown = pr.ReviewKnown
 			status.Worktrees[i].UnresolvedComments = pr.UnresolvedComments
+			status.Worktrees[i].ResolvedComments = pr.ResolvedComments
+			status.Worktrees[i].CommentThreadsTotal = pr.CommentThreadsTotal
 		}
 	}
 }

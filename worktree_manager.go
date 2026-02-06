@@ -7,20 +7,33 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 )
 
 type WorktreeManager struct {
 	cwd     string
 	lockMgr *LockManager
+	mu      sync.Mutex
+	byRepo  map[string]repoBaseRefState
 }
 
 const maxRecentBranches = 15
+
+type repoBaseRefState struct {
+	Remote  string
+	BaseRef string
+	Warming bool
+}
 
 func NewWorktreeManager(cwd string, lockMgr *LockManager) *WorktreeManager {
 	if strings.TrimSpace(cwd) == "" {
 		cwd, _ = os.Getwd()
 	}
-	return &WorktreeManager{cwd: cwd, lockMgr: lockMgr}
+	return &WorktreeManager{
+		cwd:     cwd,
+		lockMgr: lockMgr,
+		byRepo:  make(map[string]repoBaseRefState),
+	}
 }
 
 func (m *WorktreeManager) ListForStatusBase() WorktreeStatus {
@@ -40,7 +53,7 @@ func (m *WorktreeManager) ListForStatusBase() WorktreeStatus {
 	}
 	status.InRepo = true
 	status.RepoRoot = repoRoot
-	status.BaseRef = defaultBaseRef(repoRoot, gitPath)
+	status.BaseRef = m.ResolveBaseRefForNewBranch()
 
 	worktrees, malformed, err := listWorktrees(repoRoot, gitPath)
 	if err != nil {
@@ -58,14 +71,17 @@ func (m *WorktreeManager) ResolveBaseRefForNewBranch() string {
 	if err != nil {
 		return "main"
 	}
-	// Best effort refresh to make origin/HEAD and remote default-branch metadata current.
-	if err := gitRunInDir(repoRoot, gitPath, "fetch", "--quiet", "origin"); err != nil {
-		_ = gitRunInDir(repoRoot, gitPath, "fetch", "--quiet")
+	if cached := m.cachedBaseRef(repoRoot); cached != "" {
+		return cached
 	}
-	if ghRef, err := defaultBaseRefFromGitHub(repoRoot); err == nil && strings.TrimSpace(ghRef) != "" {
-		return canonicalBaseRef(repoRoot, gitPath, ghRef)
+	remote := m.cachedRemote(repoRoot)
+	if remote == "" {
+		remote = preferredRemoteName(repoRoot, gitPath)
+		m.setCachedRemote(repoRoot, remote)
 	}
-	return canonicalBaseRef(repoRoot, gitPath, defaultBaseRef(repoRoot, gitPath))
+	fallback := defaultBaseRefWithRemote(repoRoot, gitPath, remote)
+	m.ensureBaseRefWarm(repoRoot, gitPath, remote, fallback)
+	return fallback
 }
 
 func (m *WorktreeManager) CreateWorktree(branch string, baseRef string) (WorktreeInfo, error) {
@@ -340,12 +356,19 @@ func gitRunInDir(dir string, path string, args ...string) error {
 	return cmd.Run()
 }
 
-func defaultBaseRef(repoRoot string, gitPath string) string {
-	ref, err := gitOutputInDir(repoRoot, gitPath, "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+func defaultBaseRefWithRemote(repoRoot string, gitPath string, remote string) string {
+	if strings.TrimSpace(remote) == "" {
+		remote = "origin"
+	}
+	ref, err := gitOutputInDir(repoRoot, gitPath, "symbolic-ref", "--short", "refs/remotes/"+remote+"/HEAD")
 	if err == nil && ref != "" {
 		return canonicalBaseRef(repoRoot, gitPath, ref)
 	}
 	return "main"
+}
+
+func defaultBaseRef(repoRoot string, gitPath string) string {
+	return defaultBaseRefWithRemote(repoRoot, gitPath, preferredRemoteName(repoRoot, gitPath))
 }
 
 func canonicalBaseRef(_ string, _ string, ref string) string {
@@ -374,16 +397,17 @@ func baseRefForWorktreeAdd(repoRoot string, gitPath string, baseRef string) stri
 	if baseRef == "" || baseRef == "HEAD" {
 		return "HEAD"
 	}
+	remote := preferredRemoteName(repoRoot, gitPath)
 	branch := shortBranch(baseRef)
 	if strings.TrimSpace(branch) != "" && branch != "detached" {
 		if localBranchExists(repoRoot, gitPath, branch) {
 			return branch
 		}
-		if remoteRef, ok := asOriginRemoteRef(repoRoot, gitPath, branch); ok {
+		if remoteRef, ok := asRemoteRef(repoRoot, gitPath, remote, branch); ok {
 			return remoteRef
 		}
 	}
-	if remoteRef, ok := asOriginRemoteRef(repoRoot, gitPath, baseRef); ok {
+	if remoteRef, ok := asRemoteRef(repoRoot, gitPath, remote, baseRef); ok {
 		return remoteRef
 	}
 	return baseRef
@@ -411,19 +435,119 @@ func defaultBaseRefFromGitHub(repoRoot string) (string, error) {
 	return ref, nil
 }
 
-func asOriginRemoteRef(repoRoot string, gitPath string, ref string) (string, bool) {
+func asRemoteRef(repoRoot string, gitPath string, remote string, ref string) (string, bool) {
 	ref = strings.TrimSpace(ref)
+	remote = strings.TrimSpace(remote)
+	if remote == "" {
+		return "", false
+	}
 	if ref == "" {
 		return "", false
 	}
-	if strings.HasPrefix(ref, "origin/") {
+	if strings.HasPrefix(ref, remote+"/") {
 		return ref, true
 	}
-	remote := "origin/" + ref
-	if _, err := gitOutputInDir(repoRoot, gitPath, "show-ref", "--verify", "refs/remotes/"+remote); err == nil {
-		return remote, true
+	remoteRef := remote + "/" + ref
+	if _, err := gitOutputInDir(repoRoot, gitPath, "show-ref", "--verify", "refs/remotes/"+remoteRef); err == nil {
+		return remoteRef, true
 	}
 	return "", false
+}
+
+func preferredRemoteName(repoRoot string, gitPath string) string {
+	current, err := gitOutputInDir(repoRoot, gitPath, "branch", "--show-current")
+	if err == nil && strings.TrimSpace(current) != "" {
+		upstream, upErr := gitOutputInDir(repoRoot, gitPath, "for-each-ref", "--format=%(upstream:short)", "refs/heads/"+strings.TrimSpace(current))
+		if upErr == nil {
+			upstream = strings.TrimSpace(upstream)
+			if idx := strings.Index(upstream, "/"); idx > 0 {
+				remote := strings.TrimSpace(upstream[:idx])
+				if remote != "" {
+					return remote
+				}
+			}
+		}
+	}
+	remotes, err := gitOutputInDir(repoRoot, gitPath, "remote")
+	if err != nil {
+		return "origin"
+	}
+	list := strings.Split(strings.TrimSpace(remotes), "\n")
+	for _, remote := range list {
+		if strings.TrimSpace(remote) == "origin" {
+			return "origin"
+		}
+	}
+	for _, remote := range list {
+		if trimmed := strings.TrimSpace(remote); trimmed != "" {
+			return trimmed
+		}
+	}
+	return "origin"
+}
+
+func (m *WorktreeManager) cachedBaseRef(repoRoot string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return strings.TrimSpace(m.byRepo[repoRoot].BaseRef)
+}
+
+func (m *WorktreeManager) cachedRemote(repoRoot string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return strings.TrimSpace(m.byRepo[repoRoot].Remote)
+}
+
+func (m *WorktreeManager) setCachedRemote(repoRoot string, remote string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	entry := m.byRepo[repoRoot]
+	entry.Remote = strings.TrimSpace(remote)
+	m.byRepo[repoRoot] = entry
+}
+
+func (m *WorktreeManager) ensureBaseRefWarm(repoRoot string, gitPath string, remote string, fallback string) {
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return
+	}
+	m.mu.Lock()
+	entry := m.byRepo[repoRoot]
+	if strings.TrimSpace(entry.BaseRef) != "" || entry.Warming {
+		m.mu.Unlock()
+		return
+	}
+	entry.Warming = true
+	entry.Remote = strings.TrimSpace(remote)
+	m.byRepo[repoRoot] = entry
+	m.mu.Unlock()
+
+	go func() {
+		resolved := strings.TrimSpace(fallback)
+		if strings.TrimSpace(entry.Remote) == "" {
+			entry.Remote = preferredRemoteName(repoRoot, gitPath)
+		}
+		if strings.TrimSpace(entry.Remote) != "" {
+			_ = gitRunInDir(repoRoot, gitPath, "fetch", "--quiet", entry.Remote)
+		} else {
+			_ = gitRunInDir(repoRoot, gitPath, "fetch", "--quiet")
+		}
+		if ghRef, err := defaultBaseRefFromGitHub(repoRoot); err == nil && strings.TrimSpace(ghRef) != "" {
+			resolved = canonicalBaseRef(repoRoot, gitPath, ghRef)
+		} else {
+			resolved = defaultBaseRefWithRemote(repoRoot, gitPath, entry.Remote)
+		}
+		if strings.TrimSpace(resolved) == "" {
+			resolved = "main"
+		}
+		m.mu.Lock()
+		final := m.byRepo[repoRoot]
+		final.Remote = entry.Remote
+		final.BaseRef = resolved
+		final.Warming = false
+		m.byRepo[repoRoot] = final
+		m.mu.Unlock()
+	}()
 }
 
 func worktreePathExists(path string) (bool, error) {
