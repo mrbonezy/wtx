@@ -49,6 +49,9 @@ func buildTmuxStatusLine(worktreePath string) string {
 	}
 	label += "  " + worktreePath
 	label += "  " + ghSummaryForBranchCached(worktreePath, branch)
+	if agent := strings.TrimSpace(tmuxAgentSummary(worktreePath)); agent != "" {
+		label += "  " + agent
+	}
 	return label
 }
 

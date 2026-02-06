@@ -80,6 +80,7 @@ func (m *LockManager) acquireWithPID(repoRoot string, worktreePath string, pid i
 			return nil, werr
 		}
 		_ = file.Close()
+		_ = writeWorktreeLastUsed(repoRoot, worktreePath)
 		return &WorktreeLock{path: lockPath, worktreePath: worktreePath, repoRoot: repoRoot, ownerID: ownerID, pid: pid}, nil
 	}
 	if !errors.Is(err, os.ErrExist) {
@@ -118,6 +119,7 @@ func (m *LockManager) acquireWithPID(repoRoot string, worktreePath string, pid i
 	if current.OwnerID != ownerID || current.PID != pid {
 		return nil, errors.New("worktree locked")
 	}
+	_ = writeWorktreeLastUsed(repoRoot, worktreePath)
 	return &WorktreeLock{path: lockPath, worktreePath: worktreePath, repoRoot: repoRoot, ownerID: ownerID, pid: pid}, nil
 }
 
@@ -162,6 +164,7 @@ func (l *WorktreeLock) Release() {
 	if l == nil {
 		return
 	}
+	_ = writeWorktreeLastUsed(l.repoRoot, l.worktreePath)
 	_ = os.Remove(l.path)
 }
 
@@ -178,6 +181,33 @@ func (m *LockManager) ForceUnlock(repoRoot string, worktreePath string) error {
 	if err != nil {
 		return err
 	}
+	if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+func (m *LockManager) ReleaseIfOwned(repoRoot string, worktreePath string) error {
+	repoRoot = strings.TrimSpace(repoRoot)
+	worktreePath = strings.TrimSpace(worktreePath)
+	if repoRoot == "" || worktreePath == "" {
+		return nil
+	}
+	lockPath, err := m.lockPath(repoRoot, worktreePath)
+	if err != nil {
+		return err
+	}
+	payload, err := readLockPayload(lockPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if payload.OwnerID != buildOwnerID() {
+		return nil
+	}
+	_ = writeWorktreeLastUsed(repoRoot, worktreePath)
 	if err := os.Remove(lockPath); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
@@ -210,6 +240,7 @@ func (l *WorktreeLock) RebindPID(pid int) error {
 		_ = os.Remove(tmpPath)
 		return err
 	}
+	_ = writeWorktreeLastUsed(l.repoRoot, l.worktreePath)
 	l.pid = pid
 	return nil
 }
@@ -270,6 +301,43 @@ func realPathOrAbs(path string) (string, error) {
 		return "", err
 	}
 	return real, nil
+}
+
+func writeWorktreeLastUsed(repoRoot string, worktreePath string) error {
+	path, err := worktreeLastUsedPath(repoRoot, worktreePath)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	timestamp := time.Now().UTC().Format(time.RFC3339Nano)
+	return os.WriteFile(path, []byte(timestamp+"\n"), 0o644)
+}
+
+func worktreeLastUsedUnix(repoRoot string, worktreePath string) int64 {
+	path, err := worktreeLastUsedPath(repoRoot, worktreePath)
+	if err != nil {
+		return 0
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return 0
+	}
+	return info.ModTime().UnixNano()
+}
+
+func worktreeLastUsedPath(repoRoot string, worktreePath string) (string, error) {
+	worktreeID, err := worktreeID(repoRoot, worktreePath)
+	if err != nil {
+		return "", err
+	}
+	home := strings.TrimSpace(os.Getenv("HOME"))
+	if home == "" {
+		return "", errors.New("HOME not set")
+	}
+	lastUsedDir := filepath.Join(home, ".wtx", "last_used")
+	return filepath.Join(lastUsedDir, worktreeID), nil
 }
 
 func hashString(value string) string {

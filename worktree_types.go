@@ -4,6 +4,7 @@ type WorktreeInfo struct {
 	Path               string
 	Branch             string
 	Available          bool
+	LastUsedUnix       int64
 	PRURL              string
 	PRNumber           int
 	HasPR              bool
