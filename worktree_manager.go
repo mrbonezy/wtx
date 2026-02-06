@@ -14,6 +14,8 @@ type WorktreeManager struct {
 	lockMgr *LockManager
 }
 
+const maxRecentBranches = 15
+
 func NewWorktreeManager(cwd string, lockMgr *LockManager) *WorktreeManager {
 	if strings.TrimSpace(cwd) == "" {
 		cwd, _ = os.Getwd()
@@ -154,6 +156,9 @@ func (m *WorktreeManager) ListLocalBranchesByRecentUse() ([]string, error) {
 			continue
 		}
 		branches = append(branches, name)
+	}
+	if len(branches) > maxRecentBranches {
+		branches = branches[:maxRecentBranches]
 	}
 	return branches, nil
 }
