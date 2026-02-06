@@ -31,10 +31,13 @@ wtx
 
 Inside the picker:
 
+- `left`/`right`: switch between worktree view and PR view
 - `enter`: actions for selected free worktree
 - `s`: open shell in selected free worktree
 - `d`: delete selected worktree (with confirmation)
 - `u`: unlock selected locked worktree (with confirmation)
+- `p`: open selected worktree PR URL (worktree view)
+- `P`: open selected PR URL (PR view)
 - `r`: manual refresh (bypasses GH cache)
 - `q`: quit
 
@@ -55,6 +58,7 @@ Inside the picker:
   - PR link
   - CI status and progress
   - review summary
+  - open PR view ordered by most recently updated
 - Tmux integration:
   - auto-starts inside a fresh tmux session when launched outside tmux
   - custom bottom status line

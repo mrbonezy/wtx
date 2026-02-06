@@ -78,3 +78,13 @@ func (o *WorktreeOrchestrator) PRDataForStatusWithError(status WorktreeStatus, f
 	}
 	return o.prMgr.PRDataByBranch(status.RepoRoot, branches)
 }
+
+func (o *WorktreeOrchestrator) PRsForStatusWithError(status WorktreeStatus, force bool) ([]PRListData, error) {
+	if o == nil || o.prMgr == nil {
+		return []PRListData{}, nil
+	}
+	if !status.InRepo || strings.TrimSpace(status.RepoRoot) == "" {
+		return []PRListData{}, nil
+	}
+	return o.prMgr.PRs(status.RepoRoot, force)
+}
