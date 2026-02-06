@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,20 @@ type PRData struct {
 	CITotal            int
 }
 
+type PRListData struct {
+	Number         int
+	URL            string
+	Branch         string
+	Title          string
+	Status         string
+	ReviewDecision string
+	Approved       bool
+	CIState        PRCIState
+	CICompleted    int
+	CITotal        int
+	UpdatedAt      time.Time
+}
+
 type GHManager struct {
 	mu    sync.Mutex
 	cache map[string]ghRepoCache
@@ -42,12 +57,14 @@ type GHManager struct {
 type ghRepoCache struct {
 	fetchedAt time.Time
 	prs       map[string]PRData
+	prList    []PRListData
 }
 
 type ghPR struct {
 	Number            int       `json:"number"`
 	URL               string    `json:"url"`
 	HeadRefName       string    `json:"headRefName"`
+	Title             string    `json:"title"`
 	IsDraft           bool      `json:"isDraft"`
 	State             string    `json:"state"`
 	UpdatedAt         string    `json:"updatedAt"`
@@ -90,29 +107,23 @@ func (m *GHManager) PRDataByBranchForce(repoRoot string, branches []string) (map
 	return m.prDataByBranch(repoRoot, branches, true)
 }
 
+func (m *GHManager) PRs(repoRoot string, force bool) ([]PRListData, error) {
+	repoRoot = strings.TrimSpace(repoRoot)
+	if repoRoot == "" {
+		return []PRListData{}, nil
+	}
+	cached, fetchErr := m.ensureRepoCache(repoRoot, force)
+	out := make([]PRListData, len(cached.prList))
+	copy(out, cached.prList)
+	return out, fetchErr
+}
+
 func (m *GHManager) prDataByBranch(repoRoot string, branches []string, force bool) (map[string]PRData, error) {
 	repoRoot = strings.TrimSpace(repoRoot)
 	if repoRoot == "" || len(branches) == 0 {
 		return map[string]PRData{}, nil
 	}
-	m.mu.Lock()
-	cached, ok := m.cache[repoRoot]
-	fresh := !force && ok && time.Since(cached.fetchedAt) < m.ttl
-	m.mu.Unlock()
-
-	var fetchErr error
-	if !fresh {
-		prs, err := m.fetchRepoPRData(repoRoot, branches)
-		if err == nil {
-			m.mu.Lock()
-			m.cache[repoRoot] = ghRepoCache{fetchedAt: time.Now(), prs: prs}
-			cached = m.cache[repoRoot]
-			m.mu.Unlock()
-		} else {
-			fetchErr = err
-		}
-	}
-
+	cached, fetchErr := m.ensureRepoCache(repoRoot, force)
 	out := make(map[string]PRData, len(branches))
 	for _, b := range branches {
 		if d, ok := cached.prs[b]; ok {
@@ -122,68 +133,102 @@ func (m *GHManager) prDataByBranch(repoRoot string, branches []string, force boo
 	return out, fetchErr
 }
 
-func (m *GHManager) fetchRepoPRData(repoRoot string, branches []string) (map[string]PRData, error) {
+func (m *GHManager) ensureRepoCache(repoRoot string, force bool) (ghRepoCache, error) {
+	m.mu.Lock()
+	cached, ok := m.cache[repoRoot]
+	fresh := !force && ok && time.Since(cached.fetchedAt) < m.ttl
+	m.mu.Unlock()
+
+	var fetchErr error
+	if !fresh {
+		prsByBranch, prs, err := m.fetchRepoPRData(repoRoot)
+		if err == nil {
+			m.mu.Lock()
+			m.cache[repoRoot] = ghRepoCache{fetchedAt: time.Now(), prs: prsByBranch, prList: prs}
+			cached = m.cache[repoRoot]
+			m.mu.Unlock()
+		} else {
+			fetchErr = err
+		}
+	}
+	return cached, fetchErr
+}
+
+func (m *GHManager) fetchRepoPRData(repoRoot string) (map[string]PRData, []PRListData, error) {
 	if _, err := exec.LookPath("gh"); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	ghPath, err := exec.LookPath("gh")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	cmd := exec.Command(ghPath, "pr", "list", "--state", "all", "--json", "number,url,headRefName,isDraft,state,updatedAt,mergedAt,reviewDecision,statusCheckRollup", "--limit", "200")
+	cmd := exec.Command(ghPath, "pr", "list", "--state", "all", "--json", "number,url,headRefName,title,isDraft,state,updatedAt,mergedAt,reviewDecision,statusCheckRollup", "--limit", "200")
 	cmd.Dir = repoRoot
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		msg := strings.TrimSpace(string(out))
 		if msg == "" {
-			return nil, err
+			return nil, nil, err
 		}
-		return nil, fmt.Errorf("%w: %s", err, msg)
+		return nil, nil, fmt.Errorf("%w: %s", err, msg)
 	}
 	var prs []ghPR
 	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	owner, name, err := resolveGitHubRepo(repoRoot)
 	if err != nil {
 		owner, name = "", ""
 	}
-	wanted := make(map[string]bool, len(branches))
-	for _, b := range branches {
-		wanted[strings.TrimSpace(b)] = true
-	}
 	result := make(map[string]PRData, len(prs))
 	latestUpdated := make(map[string]time.Time, len(prs))
+	prList := make([]PRListData, 0, len(prs))
 	for _, pr := range prs {
 		branch := strings.TrimSpace(pr.HeadRefName)
-		if branch == "" || !wanted[branch] {
+		if branch == "" {
 			continue
 		}
 		updatedAt := parseGitHubTime(pr.UpdatedAt)
-		if t, ok := latestUpdated[branch]; ok && !updatedAt.After(t) {
-			continue
-		}
 		ciState, ciDone, ciTotal := summarizeCI(pr.StatusCheckRollup)
+		status := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
 		data := PRData{
 			Number:         pr.Number,
 			URL:            strings.TrimSpace(pr.URL),
 			Branch:         branch,
-			Status:         normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft),
+			Status:         status,
 			ReviewDecision: strings.TrimSpace(pr.ReviewDecision),
 			Approved:       strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"),
 			CIState:        ciState,
 			CICompleted:    ciDone,
 			CITotal:        ciTotal,
 		}
-		if owner != "" && name != "" && pr.Number > 0 {
+		if (status == "open" || status == "draft") && owner != "" && name != "" && pr.Number > 0 {
 			if unresolved, uerr := unresolvedCommentsForPR(ghPath, repoRoot, owner, name, pr.Number); uerr == nil {
 				data.UnresolvedComments = unresolved
 			}
 		}
-		latestUpdated[branch] = updatedAt
-		result[branch] = data
+		if t, ok := latestUpdated[branch]; !ok || updatedAt.After(t) {
+			latestUpdated[branch] = updatedAt
+			result[branch] = data
+		}
+		prList = append(prList, PRListData{
+			Number:         pr.Number,
+			URL:            strings.TrimSpace(pr.URL),
+			Branch:         branch,
+			Title:          strings.TrimSpace(pr.Title),
+			Status:         status,
+			ReviewDecision: strings.TrimSpace(pr.ReviewDecision),
+			Approved:       strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"),
+			CIState:        ciState,
+			CICompleted:    ciDone,
+			CITotal:        ciTotal,
+			UpdatedAt:      updatedAt,
+		})
 	}
-	return result, nil
+	sort.SliceStable(prList, func(i, j int) bool {
+		return prList[i].UpdatedAt.After(prList[j].UpdatedAt)
+	})
+	return result, prList, nil
 }
 
 func parseGitHubTime(value string) time.Time {

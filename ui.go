@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/paginator"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -18,6 +19,9 @@ type model struct {
 	runner            *Runner
 	status            WorktreeStatus
 	listIndex         int
+	prIndex           int
+	prs               []PRListData
+	viewPager         paginator.Model
 	ready             bool
 	width             int
 	height            int
@@ -67,6 +71,7 @@ func newModel() model {
 	m.ghSpinner = newGHSpinner()
 	m.ghPendingByBranch = map[string]bool{}
 	m.ghDataByBranch = map[string]PRData{}
+	m.viewPager = newViewPager()
 	return m
 }
 
@@ -79,6 +84,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		m.status = WorktreeStatus(msg)
 		m.listIndex = clampListIndex(m.listIndex, m.status)
+		m.prIndex = clampPRIndex(m.prIndex, m.prs)
 		if m.autoActionPath != "" {
 			if idx, wt, ok := findWorktreeByPath(m.status, m.autoActionPath); ok {
 				m.listIndex = idx
@@ -94,6 +100,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "" {
 			m.ghPendingByBranch = map[string]bool{}
 			m.ghDataByBranch = map[string]PRData{}
+			m.prs = nil
+			m.prIndex = 0
 			m.ghLoadedKey = ""
 			m.ghFetchingKey = ""
 			m.ghWarnMsg = ""
@@ -108,9 +116,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.ghFetchingKey = key
 		m.ghPendingByBranch = pendingBranchesByName(m.status)
-		if len(m.ghPendingByBranch) == 0 {
-			return m, nil
-		}
 		force := m.forceGHRefresh
 		m.forceGHRefresh = false
 		return m, tea.Batch(fetchGHDataCmd(m.orchestrator, m.status, key, force), m.ghSpinner.Tick)
@@ -127,6 +132,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.ghWarnMsg = ghWarningFromErr(msg.err)
 		m.ghDataByBranch = msg.byBranch
+		m.prs = msg.prs
+		m.prIndex = clampPRIndex(m.prIndex, m.prs)
 		applyPRDataToStatus(&m.status, m.ghDataByBranch)
 		m.ghPendingByBranch = map[string]bool{}
 		m.ghLoadedKey = msg.key
@@ -425,6 +432,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
+		prevPage := m.viewPager.Page
+		updatedPager, pagerCmd := m.viewPager.Update(msg)
+		m.viewPager = updatedPager
+		if m.viewPager.Page != prevPage {
+			m.errMsg = ""
+			return m, pagerCmd
+		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
@@ -438,17 +452,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.forceGHRefresh = true
 			return m, fetchStatusCmd(m.orchestrator)
 		case "up", "k":
-			if m.listIndex > 0 {
-				m.listIndex--
+			if m.viewPager.Page == worktreePage {
+				if m.listIndex > 0 {
+					m.listIndex--
+				}
+			} else if m.prIndex > 0 {
+				m.prIndex--
 			}
 			return m, nil
 		case "down", "j":
-			maxIndex := selectorRowCount(m.status) - 1
-			if m.listIndex < maxIndex {
-				m.listIndex++
+			if m.viewPager.Page == worktreePage {
+				maxIndex := selectorRowCount(m.status) - 1
+				if m.listIndex < maxIndex {
+					m.listIndex++
+				}
+			} else {
+				maxIndex := len(m.prs) - 1
+				if m.prIndex < maxIndex {
+					m.prIndex++
+				}
 			}
 			return m, nil
 		case "enter":
+			if m.viewPager.Page != worktreePage {
+				return m, nil
+			}
 			if isCreateRow(m.listIndex, m.status) {
 				m.mode = modeAction
 				m.actionCreate = true
@@ -474,6 +502,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "s":
+			if m.viewPager.Page != worktreePage {
+				return m, nil
+			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if isOrphanedPath(m.status, row.Path) {
 					m.errMsg = "Cannot open shell for orphaned worktree."
@@ -488,6 +519,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		case "d":
+			if m.viewPager.Page != worktreePage {
+				return m, nil
+			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				m.mode = modeDelete
 				m.deletePath = row.Path
@@ -495,7 +529,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = ""
 				return m, nil
 			}
-		case "p":
+		case "p", "P":
+			if m.viewPager.Page == prsPage {
+				pr, ok := selectedPR(m.prs, m.prIndex)
+				if !ok {
+					m.errMsg = "No PR selected."
+					return m, nil
+				}
+				if strings.TrimSpace(pr.URL) == "" {
+					m.errMsg = "No URL for selected PR."
+					return m, nil
+				}
+				if err := m.runner.OpenURL(pr.URL); err != nil {
+					m.errMsg = err.Error()
+					return m, nil
+				}
+				m.errMsg = ""
+				return m, nil
+			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if strings.TrimSpace(row.PRURL) == "" {
 					m.errMsg = "No PR URL for selected worktree."
@@ -509,6 +560,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "u":
+			if m.viewPager.Page != worktreePage {
+				return m, nil
+			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if isOrphanedPath(m.status, row.Path) {
 					m.errMsg = "Cannot unlock orphaned worktree."
@@ -531,8 +585,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) View() string {
 	var b strings.Builder
-	b.WriteString(bannerStyle.Render("WTX"))
-	b.WriteString("\n\n")
+	showTopBar := m.ready && m.status.InRepo && m.mode == modeList
+	if showTopBar {
+		b.WriteString(bannerStyle.Render("WTX"))
+		b.WriteString("  ")
+		b.WriteString(renderViewHeader(m.viewPager.Page))
+		b.WriteString("\n\n")
+	} else {
+		b.WriteString(bannerStyle.Render("WTX"))
+		b.WriteString("\n\n")
+	}
 
 	if !m.ready {
 		b.WriteString("Loading...\n")
@@ -638,7 +700,12 @@ func (m model) View() string {
 		b.WriteString("\nAre you sure? (y/N)\n")
 		return b.String()
 	}
-	b.WriteString(baseStyle.Render(renderSelector(m.status, m.listIndex, m.ghPendingByBranch, m.ghSpinner.View())))
+	if m.viewPager.Page == prsPage {
+		prLoading := strings.TrimSpace(m.ghFetchingKey) != ""
+		b.WriteString(baseStyle.Render(renderPRSelector(m.prs, m.prIndex, prLoading, m.ghSpinner.View())))
+	} else {
+		b.WriteString(baseStyle.Render(renderSelector(m.status, m.listIndex, m.ghPendingByBranch, m.ghSpinner.View())))
+	}
 	b.WriteString("\n")
 	if m.status.Err != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.status.Err)))
@@ -671,31 +738,188 @@ func (m model) View() string {
 			b.WriteString("\n")
 		}
 	}
-	selectedPath := currentWorktreePath(m.status, m.listIndex)
-	if selectedPath != "" {
-		b.WriteString("\n")
-		b.WriteString(secondaryStyle.Render(selectedPath))
-		b.WriteString("\n")
+	if m.viewPager.Page == worktreePage {
+		selectedPath := currentWorktreePath(m.status, m.listIndex)
+		if selectedPath != "" {
+			b.WriteString("\n")
+			b.WriteString(secondaryStyle.Render(selectedPath))
+			b.WriteString("\n")
+		}
+	}
+	if m.viewPager.Page == prsPage {
+		if pr, ok := selectedPR(m.prs, m.prIndex); ok && strings.TrimSpace(pr.URL) != "" {
+			b.WriteString("\n")
+			b.WriteString(secondaryStyle.Render(pr.URL))
+			b.WriteString("\n")
+		}
 	}
 	b.WriteString("\n")
-	help := "Press r to refresh, q to quit."
-	if m.mode == modeCreating {
+	help := "Press ←/→ to switch views, r to refresh, q to quit."
+	if m.viewPager.Page == prsPage {
+		help = "Press up/down to select PR, p to open URL, ←/→ to switch views, r to refresh, q to quit."
+	} else if m.mode == modeCreating {
 		help = "Creating worktree..."
 	} else if isCreateRow(m.listIndex, m.status) {
-		help = "Press enter for actions, r to refresh, q to quit."
-	} else if wt, ok := selectedWorktree(m.status, m.listIndex); ok {
-		prHint := ""
-		if strings.TrimSpace(wt.PRURL) != "" {
-			prHint = ", p to open PR"
+		help = "Press enter for actions, ←/→ to switch views, r to refresh, q to quit."
+		} else if wt, ok := selectedWorktree(m.status, m.listIndex); ok {
+			prHint := ""
+			if strings.TrimSpace(wt.PRURL) != "" {
+				prHint = ", p to open PR"
+			}
+			if !wt.Available && !isOrphanedPath(m.status, wt.Path) {
+				help = "Press u to unlock, d to delete" + prHint + ", ←/→ to switch views, r to refresh, q to quit."
+			} else {
+				help = "Press enter for actions, s for shell, d to delete" + prHint + ", ←/→ to switch views, r to refresh, q to quit."
+			}
 		}
-		if !wt.Available && !isOrphanedPath(m.status, wt.Path) {
-			help = "Press s for shell, u to unlock, d to delete" + prHint + ", r to refresh, q to quit."
-		} else {
-			help = "Press enter for actions, s for shell, d to delete" + prHint + ", r to refresh, q to quit."
-		}
-	}
 	b.WriteString(help + "\n")
 	return b.String()
+}
+
+func renderViewHeader(page int) string {
+	tabs := []string{
+		"Worktrees",
+		"PRs",
+	}
+	activeTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
+	inactiveTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
+	for i := range tabs {
+		if i == page {
+			tabs[i] = activeTabStyle.Render(tabs[i])
+		} else {
+			tabs[i] = inactiveTabStyle.Render(tabs[i])
+		}
+	}
+	return strings.Join(tabs, " | ") + "  " + subtleHintStyle.Render("← → change view")
+}
+
+func renderPRSelector(prs []PRListData, cursor int, loading bool, loadingGlyph string) string {
+	const (
+		numberWidth   = 8
+		branchWidth   = 24
+		titleWidth    = 48
+		ciWidth       = 12
+		approvalWidth = 14
+		statusWidth   = 10
+	)
+	var b strings.Builder
+	header := formatOpenPRLine("PR", "Branch", "Title", "CI status", "Approval", "PR status", numberWidth, branchWidth, titleWidth, ciWidth, approvalWidth, statusWidth)
+	b.WriteString(selectorHeaderStyle.Render("  " + header))
+	b.WriteString("\n")
+	if len(prs) == 0 {
+		b.WriteString("  ")
+		b.WriteString(selectorDisabledStyle.Render("No PRs."))
+		if loading {
+			b.WriteString("\n  ")
+			b.WriteString(secondaryStyle.Render(loadingGlyph + " Loading PRs..."))
+		}
+		return b.String()
+	}
+	for i, pr := range prs {
+		rowStyle := selectorNormalStyle
+		rowSelectedStyle := selectorSelectedStyle
+		if isInactivePRStatus(pr.Status) {
+			rowStyle = selectorDisabledStyle
+			rowSelectedStyle = selectorDisabledSelectedStyle
+		}
+		line := formatOpenPRLine(
+			fmt.Sprintf("#%d", pr.Number),
+			pr.Branch,
+			pr.Title,
+			formatPRListCI(pr),
+			formatPRListApproval(pr),
+			formatPRListStatus(pr),
+			numberWidth,
+			branchWidth,
+			titleWidth,
+			ciWidth,
+			approvalWidth,
+			statusWidth,
+		)
+		if i == cursor {
+			b.WriteString("  " + rowSelectedStyle.Render(line))
+		} else {
+			b.WriteString("  " + rowStyle.Render(line))
+		}
+		b.WriteString("\n")
+	}
+	if loading {
+		b.WriteString("  ")
+		b.WriteString(secondaryStyle.Render(loadingGlyph + " Loading PRs..."))
+	}
+	return b.String()
+}
+
+func formatOpenPRLine(number string, branch string, title string, ci string, approval string, status string, numberWidth int, branchWidth int, titleWidth int, ciWidth int, approvalWidth int, statusWidth int) string {
+	return padOrTrim(number, numberWidth) + " " +
+		padOrTrim(branch, branchWidth) + " " +
+		padOrTrim(title, titleWidth) + " " +
+		padOrTrim(ci, ciWidth) + " " +
+		padOrTrim(approval, approvalWidth) + " " +
+		padOrTrim(status, statusWidth)
+}
+
+func formatPRListCI(pr PRListData) string {
+	if pr.CITotal == 0 {
+		return "-"
+	}
+	switch pr.CIState {
+	case PRCISuccess:
+		return fmt.Sprintf("✓ %d/%d", pr.CICompleted, pr.CITotal)
+	case PRCIFail:
+		return fmt.Sprintf("✗ %d/%d", pr.CICompleted, pr.CITotal)
+	case PRCIInProgress:
+		return fmt.Sprintf("… %d/%d", pr.CICompleted, pr.CITotal)
+	default:
+		return "-"
+	}
+}
+
+func formatPRListApproval(pr PRListData) string {
+	if pr.Approved {
+		return "approved"
+	}
+	switch strings.ToLower(strings.TrimSpace(pr.ReviewDecision)) {
+	case "changes_requested":
+		return "changes_requested"
+	case "review_required":
+		return "review_required"
+	default:
+		return "-"
+	}
+}
+
+func formatPRListStatus(pr PRListData) string {
+	status := strings.TrimSpace(strings.ToLower(pr.Status))
+	if status == "" {
+		return "-"
+	}
+	return status
+}
+
+func isInactivePRStatus(status string) bool {
+	s := strings.TrimSpace(strings.ToLower(status))
+	return s == "closed" || s == "merged"
+}
+
+func selectedPR(prs []PRListData, index int) (PRListData, bool) {
+	if index < 0 || index >= len(prs) {
+		return PRListData{}, false
+	}
+	return prs[index], true
+}
+
+func clampPRIndex(index int, prs []PRListData) int {
+	if len(prs) == 0 {
+		return 0
+	}
+	if index < 0 {
+		return 0
+	}
+	if index >= len(prs) {
+		return len(prs) - 1
+	}
+	return index
 }
 
 type statusMsg WorktreeStatus
@@ -704,6 +928,7 @@ type ghDataMsg struct {
 	repoRoot string
 	key      string
 	byBranch map[string]PRData
+	prs      []PRListData
 	err      error
 }
 type createWorktreeDoneMsg struct {
@@ -729,18 +954,31 @@ func pollStatusTickCmd() tea.Cmd {
 func fetchGHDataCmd(orchestrator *WorktreeOrchestrator, status WorktreeStatus, key string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		var byBranch map[string]PRData
-		var err error
+		var prs []PRListData
+		var byBranchErr error
+		var prListErr error
 		if orchestrator == nil {
 			byBranch = map[string]PRData{}
-		} else if force {
-			byBranch, err = orchestrator.PRDataForStatusWithError(status, true)
+			prs = []PRListData{}
 		} else {
-			byBranch, err = orchestrator.PRDataForStatusWithError(status, false)
+			byBranch, byBranchErr = orchestrator.PRDataForStatusWithError(status, force)
+			prs, prListErr = orchestrator.PRsForStatusWithError(status, force)
+			if byBranch == nil {
+				byBranch = map[string]PRData{}
+			}
+			if prs == nil {
+				prs = []PRListData{}
+			}
+		}
+		err := byBranchErr
+		if err == nil {
+			err = prListErr
 		}
 		return ghDataMsg{
 			repoRoot: status.RepoRoot,
 			key:      key,
 			byBranch: byBranch,
+			prs:      prs,
 			err:      err,
 		}
 	}
@@ -872,6 +1110,7 @@ var (
 	branchStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	branchInlineStyle   = lipgloss.NewStyle().Bold(true)
 	warnStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	subtleHintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
 	inputStyle          = lipgloss.NewStyle().
 				Padding(0, 1)
 )
@@ -886,6 +1125,11 @@ func max(a int, b int) int {
 type uiMode int
 
 const (
+	worktreePage = 0
+	prsPage      = 1
+)
+
+const (
 	modeList uiMode = iota
 	modeCreating
 	modeDelete
@@ -894,6 +1138,11 @@ const (
 	modeBranchName
 	modeBranchPick
 )
+
+func newViewPager() paginator.Model {
+	p := paginator.New(paginator.WithTotalPages(2))
+	return p
+}
 
 func newBranchInput() textinput.Model {
 	ti := textinput.New()
@@ -1162,9 +1411,6 @@ func ghDataKeyForStatus(status WorktreeStatus) string {
 		}
 		seen[name] = true
 		branches = append(branches, name)
-	}
-	if len(branches) == 0 {
-		return ""
 	}
 	sort.Strings(branches)
 	return repo + "|" + strings.Join(branches, ",")
