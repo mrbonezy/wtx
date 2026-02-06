@@ -11,6 +11,7 @@ type PRRow struct {
 	Title         string
 	CILabel       string
 	ApprovalLabel string
+	CommentsLabel string
 	StatusLabel   string
 	Inactive      bool
 }
@@ -20,12 +21,13 @@ func RenderPRSelector(rows []PRRow, cursor int, loading bool, loadingGlyph strin
 		numberWidth   = 8
 		branchWidth   = 32
 		titleWidth    = 68
-		ciWidth       = 12
+		ciWidth       = 24
 		approvalWidth = 14
+		commentsWidth = 10
 		statusWidth   = 10
 	)
 	var b strings.Builder
-	header := formatPRLine("PR", "Branch", "Title", "CI status", "Approval", "PR status", numberWidth, branchWidth, titleWidth, ciWidth, approvalWidth, statusWidth)
+	header := formatPRLine("PR", "Branch", "Title", "CI status", "Approval", "Comments", "PR status", numberWidth, branchWidth, titleWidth, ciWidth, approvalWidth, commentsWidth, statusWidth)
 	b.WriteString(styles.Header("  " + header))
 	b.WriteString("\n")
 	if len(rows) == 0 {
@@ -50,12 +52,14 @@ func RenderPRSelector(rows []PRRow, cursor int, loading bool, loadingGlyph strin
 			row.Title,
 			row.CILabel,
 			row.ApprovalLabel,
+			row.CommentsLabel,
 			row.StatusLabel,
 			numberWidth,
 			branchWidth,
 			titleWidth,
 			ciWidth,
 			approvalWidth,
+			commentsWidth,
 			statusWidth,
 		)
 		if i == cursor {
@@ -72,28 +76,30 @@ func RenderPRSelector(rows []PRRow, cursor int, loading bool, loadingGlyph strin
 	return b.String()
 }
 
-func formatPRLine(number string, branch string, title string, ci string, approval string, status string, numberWidth int, branchWidth int, titleWidth int, ciWidth int, approvalWidth int, statusWidth int) string {
+func formatPRLine(number string, branch string, title string, ci string, approval string, comments string, status string, numberWidth int, branchWidth int, titleWidth int, ciWidth int, approvalWidth int, commentsWidth int, statusWidth int) string {
 	return PadOrTrim(number, numberWidth) + " " +
 		PadOrTrim(branch, branchWidth) + " " +
 		PadOrTrim(title, titleWidth) + " " +
 		PadOrTrim(ci, ciWidth) + " " +
 		PadOrTrim(approval, approvalWidth) + " " +
+		PadOrTrim(comments, commentsWidth) + " " +
 		PadOrTrim(status, statusWidth)
 }
 
-func BuildPRRow(number int, branch string, title string, ciDone int, ciTotal int, ciState string, reviewApproved int, reviewRequired int, reviewKnown bool, status string) PRRow {
+func BuildPRRow(number int, branch string, title string, ciDone int, ciTotal int, ciState string, ciFailingNames string, reviewApproved int, reviewRequired int, reviewKnown bool, resolvedComments int, commentThreadsTotal int, status string) PRRow {
 	return PRRow{
 		NumberLabel:   fmt.Sprintf("#%d", number),
 		Branch:        branch,
 		Title:         title,
-		CILabel:       formatPRListCI(ciDone, ciTotal, ciState),
+		CILabel:       formatPRListCI(ciDone, ciTotal, ciState, ciFailingNames),
 		ApprovalLabel: formatPRListApproval(reviewApproved, reviewRequired, reviewKnown),
+		CommentsLabel: formatCommentsLabel(resolvedComments, commentThreadsTotal),
 		StatusLabel:   formatPRListStatus(status),
 		Inactive:      isInactivePRStatus(status),
 	}
 }
 
-func formatPRListCI(ciDone int, ciTotal int, ciState string) string {
+func formatPRListCI(ciDone int, ciTotal int, ciState string, ciFailingNames string) string {
 	if ciTotal == 0 {
 		return "-"
 	}
@@ -101,12 +107,29 @@ func formatPRListCI(ciDone int, ciTotal int, ciState string) string {
 	case "success":
 		return fmt.Sprintf("✓ %d/%d", ciDone, ciTotal)
 	case "fail":
+		names := strings.TrimSpace(ciFailingNames)
+		if names != "" {
+			return fmt.Sprintf("✗ %d/%d %s", ciDone, ciTotal, names)
+		}
 		return fmt.Sprintf("✗ %d/%d", ciDone, ciTotal)
 	case "in_progress":
 		return fmt.Sprintf("… %d/%d", ciDone, ciTotal)
 	default:
 		return "-"
 	}
+}
+
+func formatCommentsLabel(resolved int, total int) string {
+	if total <= 0 {
+		return "-"
+	}
+	if resolved < 0 {
+		resolved = 0
+	}
+	if resolved > total {
+		resolved = total
+	}
+	return fmt.Sprintf("(%d/%d)", resolved, total)
 }
 
 func formatPRListApproval(reviewApproved int, reviewRequired int, reviewKnown bool) string {

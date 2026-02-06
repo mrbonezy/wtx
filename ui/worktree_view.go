@@ -7,6 +7,7 @@ type WorktreeRow struct {
 	PRLabel       string
 	CILabel       string
 	ReviewLabel   string
+	CommentsLabel string
 	PRStatusLabel string
 	Disabled      bool
 }
@@ -15,12 +16,13 @@ func RenderWorktreeSelector(rows []WorktreeRow, cursor int, styles Styles) strin
 	const (
 		branchWidth   = 40
 		prWidth       = 12
-		ciWidth       = 12
+		ciWidth       = 24
 		approvedWidth = 12
+		commentsWidth = 10
 		prStateWidth  = 10
 	)
 	var b strings.Builder
-	header := formatWorktreeLine("Branch", "PR", "CI", "Approved", "PR Status", branchWidth, prWidth, ciWidth, approvedWidth, prStateWidth)
+	header := formatWorktreeLine("Branch", "PR", "CI", "Approved", "Comments", "PR Status", branchWidth, prWidth, ciWidth, approvedWidth, commentsWidth, prStateWidth)
 	b.WriteString(styles.Header("  " + header))
 	b.WriteString("\n")
 	for i, row := range rows {
@@ -35,11 +37,13 @@ func RenderWorktreeSelector(rows []WorktreeRow, cursor int, styles Styles) strin
 			row.PRLabel,
 			row.CILabel,
 			row.ReviewLabel,
+			row.CommentsLabel,
 			row.PRStatusLabel,
 			branchWidth,
 			prWidth,
 			ciWidth,
 			approvedWidth,
+			commentsWidth,
 			prStateWidth,
 		)
 		if i == cursor {
@@ -52,10 +56,11 @@ func RenderWorktreeSelector(rows []WorktreeRow, cursor int, styles Styles) strin
 	return b.String()
 }
 
-func formatWorktreeLine(branch string, pr string, ci string, approved string, prState string, branchWidth int, prWidth int, ciWidth int, approvedWidth int, prStateWidth int) string {
+func formatWorktreeLine(branch string, pr string, ci string, approved string, comments string, prState string, branchWidth int, prWidth int, ciWidth int, approvedWidth int, commentsWidth int, prStateWidth int) string {
 	return PadOrTrim(branch, branchWidth) + " " +
 		PadOrTrim(pr, prWidth) + " " +
 		PadOrTrim(ci, ciWidth) + " " +
 		PadOrTrim(approved, approvedWidth) + " " +
+		PadOrTrim(comments, commentsWidth) + " " +
 		PadOrTrim(prState, prStateWidth)
 }

@@ -14,6 +14,8 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
+const tmuxStatusIntervalSeconds = "10"
+
 func ensureFreshTmuxSession(args []string) (bool, error) {
 	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
 		return false, nil
@@ -168,7 +170,7 @@ func setStatusBanner(banner string) {
 	if err != nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	configureTmuxStatus(sessionID, "200", "")
+	configureTmuxStatus(sessionID, "200", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+banner+" ")
 }
 
@@ -186,7 +188,7 @@ func setDynamicWorktreeStatus(worktreePath string) {
 		return
 	}
 	cmd := "#(" + shellQuote(bin) + " tmux-status --worktree " + shellQuote(worktreePath) + ")"
-	configureTmuxStatus(sessionID, "300", "1")
+	configureTmuxStatus(sessionID, "300", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
@@ -247,9 +249,11 @@ func configureTmuxStatus(sessionID string, leftLength string, interval string) {
 	tmuxSetOption(sessionID, "status-style", "fg=#FFF7DB,bg=#7D56F4")
 	tmuxSetOption(sessionID, "status-left-length", leftLength)
 	tmuxSetOption(sessionID, "status-right", "")
-	if strings.TrimSpace(interval) != "" {
-		tmuxSetOption(sessionID, "status-interval", interval)
+	interval = strings.TrimSpace(interval)
+	if interval == "" {
+		interval = tmuxStatusIntervalSeconds
 	}
+	tmuxSetOption(sessionID, "status-interval", interval)
 }
 
 func tmuxSetOption(sessionID string, key string, value string) {
