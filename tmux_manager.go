@@ -81,17 +81,8 @@ func setStartupStatusBanner() {
 	setStatusBanner(renderBanner("", cwd, ""))
 }
 
-func splitAgentPane(worktreePath string, agentCmd string) (string, error) {
-	cmd := exec.Command("tmux", "split-window", "-v", "-p", "70", "-d", "-c", worktreePath, "-P", "-F", "#{pane_id}", "/bin/sh", "-lc", agentCmd)
-	out, err := cmd.Output()
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimSpace(string(out)), nil
-}
-
-func splitShellPane(worktreePath string) (string, error) {
-	cmd := exec.Command("tmux", "split-window", "-v", "-p", "70", "-d", "-c", worktreePath, "-P", "-F", "#{pane_id}", "/bin/sh", "-lc", "exec \"${SHELL:-/bin/sh}\" -l")
+func splitCommandPane(worktreePath string, runCmd string) (string, error) {
+	cmd := exec.Command("tmux", "split-window", "-v", "-p", "70", "-d", "-c", worktreePath, "-P", "-F", "#{pane_id}", "/bin/sh", "-lc", runCmd)
 	out, err := cmd.Output()
 	if err != nil {
 		return "", err
@@ -133,6 +124,14 @@ func panePID(paneID string) (int, error) {
 
 func currentSessionID() (string, error) {
 	out, err := exec.Command("tmux", "display-message", "-p", "#{session_id}").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
+func currentWindowID() (string, error) {
+	out, err := exec.Command("tmux", "display-message", "-p", "#{window_id}").Output()
 	if err != nil {
 		return "", err
 	}

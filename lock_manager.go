@@ -11,6 +11,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -30,6 +31,11 @@ type WorktreeLock struct {
 	ownerID      string
 	pid          int
 }
+
+var (
+	ownerIDOnce   sync.Once
+	cachedOwnerID string
+)
 
 func (m *LockManager) Acquire(repoRoot string, worktreePath string) (*WorktreeLock, error) {
 	return m.acquireWithPID(repoRoot, worktreePath, os.Getpid())
@@ -84,11 +90,16 @@ func (m *LockManager) acquireWithPID(repoRoot string, worktreePath string, pid i
 	if statErr != nil {
 		return nil, statErr
 	}
-	if payload, readErr := readLockPayload(lockPath); readErr == nil && payload.PID > 0 && pidAlive(payload.PID) {
-		return nil, errors.New("worktree locked")
+	current, readErr := readLockPayload(lockPath)
+	if readErr == nil && current.PID > 0 && pidAlive(current.PID) {
+		if current.OwnerID != ownerID {
+			return nil, errors.New("worktree locked")
+		}
 	}
 	if time.Since(info.ModTime()) < m.staleAfter {
-		return nil, errors.New("worktree locked")
+		if readErr != nil || current.OwnerID != ownerID {
+			return nil, errors.New("worktree locked")
+		}
 	}
 
 	tmpPath := lockPath + "." + randomToken() + ".tmp"
@@ -100,7 +111,7 @@ func (m *LockManager) acquireWithPID(repoRoot string, worktreePath string, pid i
 		return nil, err
 	}
 
-	current, err := readLockPayload(lockPath)
+	current, err = readLockPayload(lockPath)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +140,9 @@ func (m *LockManager) IsAvailable(repoRoot string, worktreePath string) (bool, e
 		payload, perr := readLockPayload(lockPath)
 		if perr != nil {
 			return false, nil
+		}
+		if payload.OwnerID == buildOwnerID() {
+			return true, nil
 		}
 		if payload.PID > 0 && pidAlive(payload.PID) {
 			return false, nil
@@ -264,6 +278,34 @@ func hashString(value string) string {
 }
 
 func buildOwnerID() string {
+	ownerIDOnce.Do(func() {
+		cachedOwnerID = computeOwnerID()
+	})
+	return cachedOwnerID
+}
+
+func computeOwnerID() string {
+	if explicit := strings.TrimSpace(os.Getenv("WTX_OWNER_ID")); explicit != "" {
+		return "explicit:" + explicit
+	}
+	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
+		if sessionID, err := currentSessionID(); err == nil && strings.TrimSpace(sessionID) != "" {
+			if windowID, werr := currentWindowID(); werr == nil && strings.TrimSpace(windowID) != "" {
+				return "tmux:" + sessionID + ":" + windowID
+			}
+			return "tmux:" + sessionID
+		}
+	}
+	if session := strings.TrimSpace(os.Getenv("TERM_SESSION_ID")); session != "" {
+		return "term-session:" + session
+	}
+	if pane := strings.TrimSpace(os.Getenv("WEZTERM_PANE")); pane != "" {
+		return "wezterm-pane:" + pane
+	}
+	if window := strings.TrimSpace(os.Getenv("KITTY_WINDOW_ID")); window != "" {
+		return "kitty-window:" + window
+	}
+
 	name := os.Getenv("USER")
 	if name == "" {
 		if u, err := user.Current(); err == nil {

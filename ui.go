@@ -55,8 +55,9 @@ func (m model) PendingWorktree() (string, string, bool, *WorktreeLock) {
 }
 
 func newModel() model {
-	mgr := NewWorktreeManager("", NewLockManager(), NewGHManager())
-	m := model{mgr: mgr, runner: NewRunner()}
+	lockMgr := NewLockManager()
+	mgr := NewWorktreeManager("", lockMgr, NewGHManager())
+	m := model{mgr: mgr, runner: NewRunner(lockMgr)}
 	m.branchInput = newBranchInput()
 	m.newBranchInput = newCreateBranchInput()
 	m.spinner = newSpinner()
@@ -306,15 +307,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 						m.errMsg = ""
 						m.warnMsg = ""
-						lock, err := m.mgr.AcquireWorktreeLock(row.Path)
-						if err != nil {
-							m.errMsg = err.Error()
-							return m, nil
-						}
 						m.pendingPath = row.Path
 						m.pendingBranch = row.Branch
 						m.pendingOpenShell = true
-						m.pendingLock = lock
+						m.pendingLock = nil
 						return m, tea.Quit
 					}
 				}
@@ -473,17 +469,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg = "Worktree is currently in use."
 					return m, nil
 				}
-				lock, err := m.mgr.AcquireWorktreeLock(row.Path)
-				if err != nil {
-					m.errMsg = err.Error()
-					return m, nil
-				}
 				m.errMsg = ""
 				m.warnMsg = ""
 				m.pendingPath = row.Path
 				m.pendingBranch = row.Branch
 				m.pendingOpenShell = true
-				m.pendingLock = lock
+				m.pendingLock = nil
 				return m, tea.Quit
 			}
 		case "d":

@@ -63,7 +63,7 @@ func run(args []string) error {
 		path, branch, openShell, lock := m.PendingWorktree()
 		if strings.TrimSpace(path) != "" {
 			shouldResetTabColor = false
-			runner := NewRunner()
+			runner := NewRunner(NewLockManager())
 			if openShell {
 				if _, err := runner.RunShellInWorktree(path, branch, lock); err != nil {
 					if lock != nil {

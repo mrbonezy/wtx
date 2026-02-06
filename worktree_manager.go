@@ -46,12 +46,6 @@ func NewWorktreeManager(cwd string, lockMgr *LockManager, ghMgr *GHManager) *Wor
 	if strings.TrimSpace(cwd) == "" {
 		cwd, _ = os.Getwd()
 	}
-	if lockMgr == nil {
-		lockMgr = NewLockManager()
-	}
-	if ghMgr == nil {
-		ghMgr = NewGHManager()
-	}
 	return &WorktreeManager{cwd: cwd, lockMgr: lockMgr, ghMgr: ghMgr}
 }
 
