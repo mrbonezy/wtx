@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/paginator"
@@ -56,7 +57,6 @@ type model struct {
 	actionBranch         string
 	actionIndex          int
 	actionCreate         bool
-	baseRefRefreshing    bool
 	branchOptions        []string
 	branchSuggestions    []string
 	branchIndex          int
@@ -92,6 +92,9 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer func() {
+		syncTabTitleWithSelection(m)
+	}()
 	switch msg := msg.(type) {
 	case statusMsg:
 		m.status = WorktreeStatus(msg)
@@ -126,7 +129,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			applyPRDataToStatus(&m.status, m.ghDataByBranch)
 		}
 		repo := strings.TrimSpace(m.status.RepoRoot)
-		fetchByBranch := key != m.ghLoadedKey && key != m.ghFetchingKey
+		fetchByBranch := shouldFetchByBranch(m.viewPager.Page, key, m.ghLoadedKey, m.ghFetchingKey)
 		fetchPRList := m.viewPager.Page == prsPage &&
 			repo != "" &&
 			repo != m.prListLoadedRepo &&
@@ -221,16 +224,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.errMsg = ""
 		m.autoActionPath = strings.TrimSpace(msg.created.Path)
 		return m, fetchStatusCmd(m.orchestrator)
-	case baseRefResolvedMsg:
-		m.baseRefRefreshing = false
-		ref := strings.TrimSpace(msg.baseRef)
-		if ref != "" {
-			m.status.BaseRef = ref
-		}
-		return m, nil
 	case spinner.TickMsg:
 		cmds := make([]tea.Cmd, 0, 2)
-		if m.mode == modeCreating || m.baseRefRefreshing {
+		if m.mode == modeCreating {
 			var cmd tea.Cmd
 			m.spinner, cmd = m.spinner.Update(msg)
 			if cmd != nil {
@@ -547,6 +543,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.prSearchActive = false
 			m.prSearchInput.Blur()
+			key := ghDataKeyForStatus(m.status)
+			if shouldFetchByBranch(m.viewPager.Page, key, m.ghLoadedKey, m.ghFetchingKey) {
+				m.ghFetchingKey = key
+				m.ghPendingByBranch = pendingBranchesByName(m.status)
+				force := m.forceGHRefresh
+				m.forceGHRefresh = false
+				return m, tea.Batch(
+					pagerCmd,
+					fetchGHDataCmd(m.orchestrator, m.status, key, force, true, false, false),
+					m.ghSpinner.Tick,
+				)
+			}
 			return m, pagerCmd
 		}
 		if m.viewPager.Page == prsPage {
@@ -654,9 +662,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionCreate = true
 				m.actionBranch = ""
 				m.actionIndex = 0
-				m.baseRefRefreshing = true
 				m.errMsg = ""
-				return m, tea.Batch(m.spinner.Tick, refreshBaseRefCmd(m.mgr))
+				return m, nil
 			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if isOrphanedPath(m.status, row.Path) {
@@ -671,9 +678,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.actionCreate = false
 				m.actionBranch = row.Branch
 				m.actionIndex = 0
-				m.baseRefRefreshing = true
 				m.errMsg = ""
-				return m, tea.Batch(m.spinner.Tick, refreshBaseRefCmd(m.mgr))
+				return m, nil
 			}
 		case "s":
 			if m.viewPager.Page != worktreePage {
@@ -761,6 +767,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func syncTabTitleWithSelection(m model) {
+	if !m.ready || !m.status.InRepo {
+		setITermWTXTab()
+		return
+	}
+	if m.viewPager.Page == prsPage {
+		if pr, ok := selectedPR(filteredPRs(m.prs, m.prSearchInput.Value()), m.prIndex); ok {
+			setITermWTXBranchTab(pr.Branch)
+			return
+		}
+		setITermWTXTab()
+		return
+	}
+	if wt, ok := selectedWorktree(m.status, m.listIndex); ok {
+		setITermWTXBranchTab(wt.Branch)
+		return
+	}
+	setITermWTXTab()
+}
+
 func (m model) View() string {
 	var b strings.Builder
 	showTopBar := m.ready && m.status.InRepo && m.mode == modeList
@@ -805,9 +831,6 @@ func (m model) View() string {
 			title = "New worktree actions:"
 		}
 		b.WriteString(title + "\n")
-		if m.baseRefRefreshing {
-			b.WriteString("  " + secondaryStyle.Render(m.spinner.View()+" Refreshing base branch...") + "\n")
-		}
 		for i, item := range currentActionItems(m.actionBranch, m.status.BaseRef, m.actionCreate) {
 			line := "  " + actionNormalStyle.Render(item)
 			if i == m.actionIndex {
@@ -1017,8 +1040,10 @@ func renderPRSelector(prs []PRListData, cursor int, loading bool, loadingGlyph s
 			pr.ReviewApproved,
 			pr.ReviewRequired,
 			pr.ReviewKnown,
+			pr.UnresolvedComments,
 			pr.ResolvedComments,
 			pr.CommentThreadsTotal,
+			pr.CommentsKnown,
 			pr.Status,
 		)
 		if cellLoading {
@@ -1117,6 +1142,14 @@ func clampPRIndex(index int, prs []PRListData) int {
 	return index
 }
 
+func shouldFetchByBranch(page int, key string, loadedKey string, fetchingKey string) bool {
+	key = strings.TrimSpace(key)
+	if page != worktreePage || key == "" {
+		return false
+	}
+	return key != strings.TrimSpace(loadedKey) && key != strings.TrimSpace(fetchingKey)
+}
+
 type statusMsg WorktreeStatus
 type pollStatusTickMsg time.Time
 type ghDataMsg struct {
@@ -1128,9 +1161,6 @@ type ghDataMsg struct {
 	fetchedPRList         bool
 	fetchedPRListEnriched bool
 	err                   error
-}
-type baseRefResolvedMsg struct {
-	baseRef string
 }
 type createWorktreeDoneMsg struct {
 	created WorktreeInfo
@@ -1169,24 +1199,38 @@ func fetchGHDataCmd(orchestrator *WorktreeOrchestrator, status WorktreeStatus, k
 				prs = []PRListData{}
 			}
 		} else {
+			var wg sync.WaitGroup
 			if includeByBranch {
-				byBranch, byBranchErr = orchestrator.PRDataForStatusWithError(status, force)
-				if byBranch == nil {
-					byBranch = map[string]PRData{}
-				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					byBranch, byBranchErr = orchestrator.PRDataForStatusWithError(status, force)
+					if byBranch == nil {
+						byBranch = map[string]PRData{}
+					}
+				}()
 			}
 			if includePRList {
-				prs, prListErr = orchestrator.PRsForStatusWithError(status, force, false)
-				if prs == nil {
-					prs = []PRListData{}
-				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					prs, prListErr = orchestrator.PRsForStatusWithError(status, force, false)
+					if prs == nil {
+						prs = []PRListData{}
+					}
+				}()
 			}
 			if includePRListEnriched {
-				prs, prListErr = orchestrator.PRsForStatusWithError(status, force, true)
-				if prs == nil {
-					prs = []PRListData{}
-				}
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					prs, prListErr = orchestrator.PRsForStatusWithError(status, force, true)
+					if prs == nil {
+						prs = []PRListData{}
+					}
+				}()
 			}
+			wg.Wait()
 		}
 		err := byBranchErr
 		if err == nil {
@@ -1219,15 +1263,6 @@ func createWorktreeFromExistingCmd(mgr *WorktreeManager, branch string) tea.Cmd 
 	}
 }
 
-func refreshBaseRefCmd(mgr *WorktreeManager) tea.Cmd {
-	return func() tea.Msg {
-		if mgr == nil {
-			return baseRefResolvedMsg{baseRef: "main"}
-		}
-		return baseRefResolvedMsg{baseRef: mgr.ResolveBaseRefForNewBranch()}
-	}
-}
-
 func renderSelector(status WorktreeStatus, cursor int, pendingByBranch map[string]bool, loadingGlyph string) string {
 	if !status.InRepo {
 		return ""
@@ -1250,13 +1285,14 @@ func renderSelector(status WorktreeStatus, cursor int, pendingByBranch map[strin
 		}
 		pending := pendingByBranch[strings.TrimSpace(wt.Branch)]
 		rows = append(rows, uiview.WorktreeRow{
-			BranchLabel:   label,
-			PRLabel:       formatPRLabel(wt, pending, loadingGlyph),
-			CILabel:       formatCILabel(wt, pending, loadingGlyph),
-			ReviewLabel:   formatReviewLabel(wt, pending, loadingGlyph),
-			CommentsLabel: formatCommentsLabel(wt, pending, loadingGlyph),
-			PRStatusLabel: formatPRStatusLabel(wt, pending, loadingGlyph),
-			Disabled:      disabled,
+			BranchLabel:     label,
+			PRLabel:         formatPRLabel(wt, pending, loadingGlyph),
+			CILabel:         formatCILabel(wt, pending, loadingGlyph),
+			ReviewLabel:     formatReviewLabel(wt, pending, loadingGlyph),
+			CommentsLabel:   formatCommentsLabel(wt, pending, loadingGlyph),
+			UnresolvedLabel: formatUnresolvedLabel(wt, pending, loadingGlyph),
+			PRStatusLabel:   formatPRStatusLabel(wt, pending, loadingGlyph),
+			Disabled:        disabled,
 		})
 	}
 	rows = append(rows, uiview.WorktreeRow{BranchLabel: "+ New worktree"})
@@ -1470,7 +1506,7 @@ func formatPRStatusLabel(wt WorktreeInfo, pending bool, loadingGlyph string) str
 		return "-"
 	}
 	switch status {
-	case "draft", "open", "closed", "merged":
+	case "merged", "closed", "conflict", "can-merge", "awaiting-review", "awaiting-ci", "awaiting-comments", "draft", "open":
 		return status
 	default:
 		return "-"
@@ -1503,7 +1539,7 @@ func formatCommentsLabel(wt WorktreeInfo, pending bool, loadingGlyph string) str
 	if pending {
 		return loadingGlyph
 	}
-	if !wt.HasPR || wt.CommentThreadsTotal <= 0 {
+	if !wt.HasPR || !wt.CommentsKnown || wt.CommentThreadsTotal <= 0 {
 		return "-"
 	}
 	resolved := wt.ResolvedComments
@@ -1514,6 +1550,20 @@ func formatCommentsLabel(wt WorktreeInfo, pending bool, loadingGlyph string) str
 		resolved = wt.CommentThreadsTotal
 	}
 	return fmt.Sprintf("(%d/%d)", resolved, wt.CommentThreadsTotal)
+}
+
+func formatUnresolvedLabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
+	if pending {
+		return loadingGlyph
+	}
+	if !wt.HasPR || !wt.CommentsKnown {
+		return "-"
+	}
+	unresolved := wt.UnresolvedComments
+	if unresolved < 0 {
+		unresolved = 0
+	}
+	return fmt.Sprintf("%d", unresolved)
 }
 
 func formatReviewLabel(wt WorktreeInfo, pending bool, loadingGlyph string) string {
@@ -1746,6 +1796,7 @@ func applyPRDataToStatus(status *WorktreeStatus, byBranch map[string]PRData) {
 		status.Worktrees[i].UnresolvedComments = 0
 		status.Worktrees[i].ResolvedComments = 0
 		status.Worktrees[i].CommentThreadsTotal = 0
+		status.Worktrees[i].CommentsKnown = false
 		if b == "" {
 			continue
 		}
@@ -1765,6 +1816,7 @@ func applyPRDataToStatus(status *WorktreeStatus, byBranch map[string]PRData) {
 			status.Worktrees[i].UnresolvedComments = pr.UnresolvedComments
 			status.Worktrees[i].ResolvedComments = pr.ResolvedComments
 			status.Worktrees[i].CommentThreadsTotal = pr.CommentThreadsTotal
+			status.Worktrees[i].CommentsKnown = pr.CommentsKnown
 		}
 	}
 }

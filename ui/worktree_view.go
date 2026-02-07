@@ -3,26 +3,28 @@ package ui
 import "strings"
 
 type WorktreeRow struct {
-	BranchLabel   string
-	PRLabel       string
-	CILabel       string
-	ReviewLabel   string
-	CommentsLabel string
-	PRStatusLabel string
-	Disabled      bool
+	BranchLabel     string
+	PRLabel         string
+	CILabel         string
+	ReviewLabel     string
+	CommentsLabel   string
+	UnresolvedLabel string
+	PRStatusLabel   string
+	Disabled        bool
 }
 
 func RenderWorktreeSelector(rows []WorktreeRow, cursor int, styles Styles) string {
 	const (
-		branchWidth   = 40
-		prWidth       = 12
-		ciWidth       = 24
-		approvedWidth = 12
-		commentsWidth = 10
-		prStateWidth  = 10
+		branchWidth     = 40
+		prWidth         = 12
+		ciWidth         = 24
+		approvalWidth   = 12
+		commentsWidth   = 10
+		unresolvedWidth = 10
+		prStateWidth    = 17
 	)
 	var b strings.Builder
-	header := formatWorktreeLine("Branch", "PR", "CI", "Approved", "Comments", "PR Status", branchWidth, prWidth, ciWidth, approvedWidth, commentsWidth, prStateWidth)
+	header := formatWorktreeLine("Branch", "PR", "CI", "Approval", "Comments", "Unresolved", "PR Status", branchWidth, prWidth, ciWidth, approvalWidth, commentsWidth, unresolvedWidth, prStateWidth)
 	b.WriteString(styles.Header("  " + header))
 	b.WriteString("\n")
 	for i, row := range rows {
@@ -38,12 +40,14 @@ func RenderWorktreeSelector(rows []WorktreeRow, cursor int, styles Styles) strin
 			row.CILabel,
 			row.ReviewLabel,
 			row.CommentsLabel,
+			row.UnresolvedLabel,
 			row.PRStatusLabel,
 			branchWidth,
 			prWidth,
 			ciWidth,
-			approvedWidth,
+			approvalWidth,
 			commentsWidth,
+			unresolvedWidth,
 			prStateWidth,
 		)
 		if i == cursor {
@@ -56,11 +60,12 @@ func RenderWorktreeSelector(rows []WorktreeRow, cursor int, styles Styles) strin
 	return b.String()
 }
 
-func formatWorktreeLine(branch string, pr string, ci string, approved string, comments string, prState string, branchWidth int, prWidth int, ciWidth int, approvedWidth int, commentsWidth int, prStateWidth int) string {
+func formatWorktreeLine(branch string, pr string, ci string, approval string, comments string, unresolved string, prState string, branchWidth int, prWidth int, ciWidth int, approvalWidth int, commentsWidth int, unresolvedWidth int, prStateWidth int) string {
 	return PadOrTrim(branch, branchWidth) + " " +
 		PadOrTrim(pr, prWidth) + " " +
 		PadOrTrim(ci, ciWidth) + " " +
-		PadOrTrim(approved, approvedWidth) + " " +
+		PadOrTrim(approval, approvalWidth) + " " +
 		PadOrTrim(comments, commentsWidth) + " " +
+		PadOrTrim(unresolved, unresolvedWidth) + " " +
 		PadOrTrim(prState, prStateWidth)
 }

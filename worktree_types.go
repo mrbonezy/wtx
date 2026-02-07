@@ -20,6 +20,7 @@ type WorktreeInfo struct {
 	UnresolvedComments  int
 	ResolvedComments    int
 	CommentThreadsTotal int
+	CommentsKnown       bool
 }
 
 type WorktreeStatus struct {

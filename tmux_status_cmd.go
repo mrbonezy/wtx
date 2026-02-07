@@ -197,6 +197,19 @@ func ciLabel(pr PRData) string {
 }
 
 func reviewLabel(pr PRData) string {
+	required, requiredKnown := ensureRequiredAtLeastApproved(
+		pr.ReviewApproved,
+		pr.ReviewKnown,
+		pr.ReviewRequired,
+		pr.ReviewRequired > 0,
+	)
+	pr.ReviewRequired = required
+	if pr.ReviewRequired > 0 {
+		return fmt.Sprintf("%d/%d u:%d", pr.ReviewApproved, pr.ReviewRequired, pr.UnresolvedComments)
+	}
+	if pr.ReviewKnown || requiredKnown {
+		return fmt.Sprintf("%d/%d u:%d", pr.ReviewApproved, pr.ReviewApproved, pr.UnresolvedComments)
+	}
 	prefix := "pending"
 	if pr.Approved {
 		prefix = "approved"
