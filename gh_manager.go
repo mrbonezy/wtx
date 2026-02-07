@@ -500,7 +500,7 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 			defer func() { <-sem }()
 			count := 0
 			countKnown := false
-			if reviewRequired > 0 && (status == "open" || status == "draft") {
+			if reviewRequired > 0 && (baseStatus == "open" || baseStatus == "draft") {
 				countResult, countErr := approvedReviewsCount(ghPath, repoRoot, owner, name, number)
 				if countErr != nil {
 					results <- enrichResult{index: idx, ok: false}
@@ -535,9 +535,12 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 		if res.countKnown {
 			prList[res.index].ReviewApproved = res.count
 			prList[res.index].ReviewKnown = true
-			if prList[res.index].ReviewApproved > prList[res.index].ReviewRequired {
-				prList[res.index].ReviewRequired = prList[res.index].ReviewApproved
-			}
+			prList[res.index].ReviewRequired, _ = ensureRequiredAtLeastApproved(
+				prList[res.index].ReviewApproved,
+				prList[res.index].ReviewKnown,
+				prList[res.index].ReviewRequired,
+				prList[res.index].ReviewRequired > 0,
+			)
 		}
 		prList[res.index].CommentsKnown = res.commentsKnown
 		prList[res.index].UnresolvedComments = res.unresolved
@@ -786,7 +789,15 @@ func reviewProgressForPR(ghPath string, repoRoot string, owner string, name stri
 			}
 		}
 	}
+	requiredCount, requiredKnown = ensureRequiredAtLeastApproved(approvedCount, approvedKnown, requiredCount, requiredKnown)
 	return approvedCount, requiredCount, approvedKnown || requiredKnown
+}
+
+func ensureRequiredAtLeastApproved(approvedCount int, approvedKnown bool, requiredCount int, requiredKnown bool) (int, bool) {
+	if approvedKnown && approvedCount > requiredCount {
+		return approvedCount, true
+	}
+	return requiredCount, requiredKnown
 }
 
 func reviewProgressFromDecision(reviewDecision string, approved bool) (int, int, bool) {
