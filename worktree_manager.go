@@ -207,13 +207,17 @@ func (m *WorktreeManager) DeleteWorktree(path string, force bool) error {
 	cmd := exec.Command(gitPath, args...)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
-		msg := strings.TrimSpace(string(out))
-		if msg != "" {
-			return errors.New(msg)
-		}
-		return err
+		return commandErrorWithOutput(err, out)
 	}
 	return nil
+}
+
+func commandErrorWithOutput(err error, out []byte) error {
+	msg := strings.TrimSpace(string(out))
+	if msg != "" {
+		return errors.New(msg)
+	}
+	return err
 }
 
 func (m *WorktreeManager) CanDeleteWorktree(path string) error {
