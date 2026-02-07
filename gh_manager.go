@@ -516,6 +516,9 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 		if res.countKnown {
 			prList[res.index].ReviewApproved = res.count
 			prList[res.index].ReviewKnown = true
+			if prList[res.index].ReviewApproved > prList[res.index].ReviewRequired {
+				prList[res.index].ReviewRequired = prList[res.index].ReviewApproved
+			}
 		}
 		prList[res.index].UnresolvedComments = res.unresolved
 		prList[res.index].ResolvedComments = res.resolved
@@ -741,6 +744,10 @@ func reviewProgressForPR(ghPath string, repoRoot string, owner string, name stri
 				approvedKnown = true
 			}
 		}
+	}
+	if approvedKnown && approvedCount > requiredCount {
+		requiredCount = approvedCount
+		requiredKnown = true
 	}
 	return approvedCount, requiredCount, approvedKnown || requiredKnown
 }
