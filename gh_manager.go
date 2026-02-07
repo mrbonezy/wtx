@@ -29,8 +29,8 @@ const (
 	ghUnresolvedPRTimeout   = 8 * time.Second
 	ghProtectionTimeout     = 5 * time.Second
 	ghReviewCountTimeout    = 6 * time.Second
-	fullPRListFields        = "number,url,headRefName,baseRefName,title,isDraft,state,updatedAt,mergedAt,reviewDecision,statusCheckRollup"
-	fallbackPRListFields    = "number,url,headRefName,baseRefName,title,isDraft,state,updatedAt,mergedAt,reviewDecision"
+	fullPRListFields        = "number,url,headRefName,baseRefName,title,isDraft,state,mergeStateStatus,updatedAt,mergedAt,reviewDecision,statusCheckRollup"
+	fallbackPRListFields    = "number,url,headRefName,baseRefName,title,isDraft,state,mergeStateStatus,updatedAt,mergedAt,reviewDecision"
 	defaultPRListFetchLimit = "15"
 	maxBranchFetchParallel  = 6
 	maxPREnrichmentParallel = 6
@@ -53,6 +53,8 @@ type PRData struct {
 	CICompleted         int
 	CITotal             int
 	CIFailingNames      string
+	CommentsKnown       bool
+	BaseStatus          string
 }
 
 type PRListData struct {
@@ -74,6 +76,9 @@ type PRListData struct {
 	ResolvedComments    int
 	CommentThreadsTotal int
 	UpdatedAt           time.Time
+	CommentsKnown       bool
+	MergeStateStatus    string
+	BaseStatus          string
 }
 
 type GHManager struct {
@@ -102,6 +107,7 @@ type ghPR struct {
 	Title             string    `json:"title"`
 	IsDraft           bool      `json:"isDraft"`
 	State             string    `json:"state"`
+	MergeStateStatus  string    `json:"mergeStateStatus"`
 	BaseRefName       string    `json:"baseRefName"`
 	UpdatedAt         string    `json:"updatedAt"`
 	MergedAt          string    `json:"mergedAt"`
@@ -349,8 +355,10 @@ func (m *GHManager) fetchRepoPRList(repoRoot string) ([]PRListData, error) {
 		}
 		updatedAt := parseGitHubTime(pr.UpdatedAt)
 		ciState, ciDone, ciTotal, failingNames := summarizeCI(pr.StatusCheckRollup)
-		status := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
+		baseStatus := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
 		reviewApproved, reviewRequired, reviewKnown := reviewProgressFromDecision(pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
+		reviewSatisfied := hasSufficientApprovals(reviewApproved, reviewRequired, reviewKnown, pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
+		status := computePRStatus(pr.State, pr.MergedAt, pr.IsDraft, pr.MergeStateStatus, reviewSatisfied, ciState, 0, false)
 		prList = append(prList, PRListData{
 			Number:              pr.Number,
 			URL:                 strings.TrimSpace(pr.URL),
@@ -369,6 +377,9 @@ func (m *GHManager) fetchRepoPRList(repoRoot string) ([]PRListData, error) {
 			ResolvedComments:    0,
 			CommentThreadsTotal: 0,
 			UpdatedAt:           updatedAt,
+			CommentsKnown:       false,
+			MergeStateStatus:    strings.TrimSpace(pr.MergeStateStatus),
+			BaseStatus:          baseStatus,
 		})
 	}
 	sort.SliceStable(prList, func(i, j int) bool {
@@ -416,13 +427,15 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 		}
 		updatedAt := parseGitHubTime(pr.UpdatedAt)
 		ciState, ciDone, ciTotal, failingNames := summarizeCI(pr.StatusCheckRollup)
-		status := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
+		baseStatus := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
 		reviewApproved, reviewRequired, reviewKnown := reviewProgressFromDecision(pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
 		base := strings.TrimSpace(pr.BaseRefName)
 		if info, ok := requiredByBase[base]; ok && info.known {
 			reviewRequired = info.count
 			reviewKnown = true
 		}
+		reviewSatisfied := hasSufficientApprovals(reviewApproved, reviewRequired, reviewKnown, pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
+		status := computePRStatus(pr.State, pr.MergedAt, pr.IsDraft, pr.MergeStateStatus, reviewSatisfied, ciState, 0, false)
 		prList = append(prList, PRListData{
 			Number:              pr.Number,
 			URL:                 strings.TrimSpace(pr.URL),
@@ -442,6 +455,9 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 			ResolvedComments:    0,
 			CommentThreadsTotal: 0,
 			UpdatedAt:           updatedAt,
+			CommentsKnown:       false,
+			MergeStateStatus:    strings.TrimSpace(pr.MergeStateStatus),
+			BaseStatus:          baseStatus,
 		})
 	}
 	sort.SliceStable(prList, func(i, j int) bool {
@@ -461,13 +477,14 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 	}
 
 	type enrichResult struct {
-		index      int
-		count      int
-		countKnown bool
-		unresolved int
-		resolved   int
-		total      int
-		ok         bool
+		index         int
+		count         int
+		countKnown    bool
+		unresolved    int
+		resolved      int
+		total         int
+		commentsKnown bool
+		ok            bool
 	}
 	results := make(chan enrichResult, len(prList))
 	sem := make(chan struct{}, maxPREnrichmentParallel)
@@ -477,7 +494,7 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 			continue
 		}
 		wg.Add(1)
-		go func(idx int, number int, status string, reviewRequired int) {
+		go func(idx int, number int, baseStatus string, reviewRequired int) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
@@ -495,15 +512,17 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 			unresolved := 0
 			resolved := 0
 			total := 0
-			if status == "open" || status == "draft" {
+			commentsKnown := false
+			if baseStatus == "open" || baseStatus == "draft" {
 				if counts, unresolvedErr := reviewThreadCountsForPR(ghPath, repoRoot, owner, name, number); unresolvedErr == nil {
 					unresolved = counts.Unresolved
 					resolved = counts.Resolved
 					total = counts.Total
+					commentsKnown = true
 				}
 			}
-			results <- enrichResult{index: idx, count: count, countKnown: countKnown, unresolved: unresolved, resolved: resolved, total: total, ok: true}
-		}(i, prList[i].Number, strings.TrimSpace(strings.ToLower(prList[i].Status)), prList[i].ReviewRequired)
+			results <- enrichResult{index: idx, count: count, countKnown: countKnown, unresolved: unresolved, resolved: resolved, total: total, commentsKnown: commentsKnown, ok: true}
+		}(i, prList[i].Number, strings.TrimSpace(strings.ToLower(prList[i].BaseStatus)), prList[i].ReviewRequired)
 	}
 	go func() {
 		wg.Wait()
@@ -516,10 +535,31 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 		if res.countKnown {
 			prList[res.index].ReviewApproved = res.count
 			prList[res.index].ReviewKnown = true
+			if prList[res.index].ReviewApproved > prList[res.index].ReviewRequired {
+				prList[res.index].ReviewRequired = prList[res.index].ReviewApproved
+			}
 		}
+		prList[res.index].CommentsKnown = res.commentsKnown
 		prList[res.index].UnresolvedComments = res.unresolved
 		prList[res.index].ResolvedComments = res.resolved
 		prList[res.index].CommentThreadsTotal = res.total
+		reviewSatisfied := hasSufficientApprovals(
+			prList[res.index].ReviewApproved,
+			prList[res.index].ReviewRequired,
+			prList[res.index].ReviewKnown,
+			prList[res.index].ReviewDecision,
+			prList[res.index].Approved,
+		)
+		prList[res.index].Status = computePRStatus(
+			prList[res.index].BaseStatus,
+			"",
+			prList[res.index].BaseStatus == "draft",
+			prList[res.index].MergeStateStatus,
+			reviewSatisfied,
+			prList[res.index].CIState,
+			prList[res.index].UnresolvedComments,
+			prList[res.index].CommentsKnown,
+		)
 	}
 	return prList, nil
 }
@@ -632,14 +672,14 @@ func ghPRDataForBranch(ghPath string, repoRoot string, owner string, name string
 	if !found {
 		return PRData{}, false, nil
 	}
-	status := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
 	ciState, ciDone, ciTotal, failingNames := summarizeCI(pr.StatusCheckRollup)
 	reviewApproved, reviewRequired, reviewKnown := reviewProgressForPR(ghPath, repoRoot, owner, name, pr.Number, pr.BaseRefName, pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
+	reviewSatisfied := hasSufficientApprovals(reviewApproved, reviewRequired, reviewKnown, pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
 	data := PRData{
 		Number:         pr.Number,
 		URL:            strings.TrimSpace(pr.URL),
 		Branch:         strings.TrimSpace(pr.HeadRefName),
-		Status:         status,
+		Status:         "-",
 		ReviewDecision: strings.TrimSpace(pr.ReviewDecision),
 		Approved:       strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"),
 		ReviewApproved: reviewApproved,
@@ -650,13 +690,17 @@ func ghPRDataForBranch(ghPath string, repoRoot string, owner string, name string
 		CITotal:        ciTotal,
 		CIFailingNames: failingNames,
 	}
-	if owner != "" && name != "" && pr.Number > 0 && (status == "open" || status == "draft") {
+	baseStatus := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
+	if owner != "" && name != "" && pr.Number > 0 && (baseStatus == "open" || baseStatus == "draft") {
 		if counts, uerr := reviewThreadCountsForPR(ghPath, repoRoot, owner, name, pr.Number); uerr == nil {
 			data.UnresolvedComments = counts.Unresolved
 			data.ResolvedComments = counts.Resolved
 			data.CommentThreadsTotal = counts.Total
+			data.CommentsKnown = true
 		}
 	}
+	data.Status = computePRStatus(pr.State, pr.MergedAt, pr.IsDraft, pr.MergeStateStatus, reviewSatisfied, ciState, data.UnresolvedComments, data.CommentsKnown)
+	data.BaseStatus = baseStatus
 	if strings.TrimSpace(data.Branch) == "" {
 		data.Branch = branch
 	}
@@ -881,16 +925,18 @@ func normalizePRStatus(state string, mergedAt string, isDraft bool) string {
 	if strings.TrimSpace(mergedAt) != "" {
 		return "merged"
 	}
-	if isDraft {
-		return "draft"
-	}
 	switch strings.ToUpper(strings.TrimSpace(state)) {
-	case "OPEN":
-		return "open"
 	case "CLOSED":
 		return "closed"
 	case "MERGED":
 		return "merged"
+	case "DRAFT":
+		return "draft"
+	case "OPEN":
+		if isDraft {
+			return "draft"
+		}
+		return "open"
 	default:
 		return "-"
 	}
@@ -898,11 +944,63 @@ func normalizePRStatus(state string, mergedAt string, isDraft bool) string {
 
 func prStatusSortBucket(status string) int {
 	switch strings.TrimSpace(strings.ToLower(status)) {
-	case "open", "draft":
-		return 0
-	default:
+	case "merged", "closed":
 		return 1
+	default:
+		return 0
 	}
+}
+
+func hasSufficientApprovals(reviewApproved int, reviewRequired int, reviewKnown bool, reviewDecision string, approved bool) bool {
+	if reviewRequired > 0 {
+		return reviewApproved >= reviewRequired
+	}
+	if reviewKnown {
+		return reviewApproved > 0
+	}
+	decision := strings.ToUpper(strings.TrimSpace(reviewDecision))
+	if decision == "APPROVED" {
+		return true
+	}
+	return approved
+}
+
+func hasConflictPRStatus(mergeStateStatus string) bool {
+	return strings.ToUpper(strings.TrimSpace(mergeStateStatus)) == "DIRTY"
+}
+
+func computePRStatus(state string, mergedAt string, isDraft bool, mergeStateStatus string, reviewSatisfied bool, ciState PRCIState, unresolvedComments int, commentsKnown bool) string {
+	base := normalizePRStatus(state, mergedAt, isDraft)
+	if base == "merged" {
+		return "merged"
+	}
+	if base == "closed" {
+		return "closed"
+	}
+	if hasConflictPRStatus(mergeStateStatus) {
+		return "conflict"
+	}
+	ciPassed := ciState == PRCISuccess
+	commentsResolved := commentsKnown && unresolvedComments <= 0
+	if reviewSatisfied && ciPassed && commentsResolved {
+		return "can-merge"
+	}
+	if !reviewSatisfied {
+		return "awaiting-review"
+	}
+	if !ciPassed {
+		return "awaiting-ci"
+	}
+	if commentsKnown && unresolvedComments > 0 {
+		return "awaiting-comments"
+	}
+	if base == "draft" {
+		return "draft"
+	}
+	if base == "open" {
+		return "open"
+	}
+	return base
 }
 
 func summarizeCI(checks []ghCheck) (PRCIState, int, int, string) {
