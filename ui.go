@@ -124,9 +124,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			applyPRDataToStatus(&m.status, m.ghDataByBranch)
 		}
 		repo := strings.TrimSpace(m.status.RepoRoot)
-		fetchByBranch := m.viewPager.Page == worktreePage &&
-			key != m.ghLoadedKey &&
-			key != m.ghFetchingKey
+		fetchByBranch := shouldFetchByBranch(m.viewPager.Page, key, m.ghLoadedKey, m.ghFetchingKey)
 		fetchPRList := m.viewPager.Page == prsPage &&
 			repo != "" &&
 			repo != m.prListLoadedRepo &&
@@ -539,7 +537,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.prSearchActive = false
 			m.prSearchInput.Blur()
 			key := ghDataKeyForStatus(m.status)
-			if key != "" && key != m.ghLoadedKey && key != m.ghFetchingKey {
+			if shouldFetchByBranch(m.viewPager.Page, key, m.ghLoadedKey, m.ghFetchingKey) {
 				m.ghFetchingKey = key
 				m.ghPendingByBranch = pendingBranchesByName(m.status)
 				force := m.forceGHRefresh
@@ -1096,6 +1094,14 @@ func clampPRIndex(index int, prs []PRListData) int {
 		return len(prs) - 1
 	}
 	return index
+}
+
+func shouldFetchByBranch(page int, key string, loadedKey string, fetchingKey string) bool {
+	key = strings.TrimSpace(key)
+	if page != worktreePage || key == "" {
+		return false
+	}
+	return key != strings.TrimSpace(loadedKey) && key != strings.TrimSpace(fetchingKey)
 }
 
 type statusMsg WorktreeStatus
