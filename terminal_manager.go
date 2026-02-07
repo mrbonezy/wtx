@@ -4,6 +4,12 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
+)
+
+var (
+	tabTitleMu   sync.Mutex
+	lastTabTitle string
 )
 
 func setITermWTXTab() {
@@ -27,6 +33,9 @@ func setITermTab(title string) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "wtx"
+	}
+	if shouldSkipTabTitleUpdate(title) {
+		return
 	}
 	// Outside tmux we control title directly; inside tmux title is managed by tmux.
 	if !inTmux {
@@ -60,4 +69,14 @@ func writeTerminalEscape(seq string) {
 		return
 	}
 	fmt.Fprint(os.Stdout, seq)
+}
+
+func shouldSkipTabTitleUpdate(title string) bool {
+	tabTitleMu.Lock()
+	defer tabTitleMu.Unlock()
+	if title == lastTabTitle {
+		return true
+	}
+	lastTabTitle = title
+	return false
 }

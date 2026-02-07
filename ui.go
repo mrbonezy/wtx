@@ -88,6 +88,9 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	defer func() {
+		syncTabTitleWithSelection(m)
+	}()
 	switch msg := msg.(type) {
 	case statusMsg:
 		m.status = WorktreeStatus(msg)
@@ -737,6 +740,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+func syncTabTitleWithSelection(m model) {
+	if !m.ready || !m.status.InRepo {
+		setITermWTXTab()
+		return
+	}
+	if m.viewPager.Page == prsPage {
+		if pr, ok := selectedPR(filteredPRs(m.prs, m.prSearchInput.Value()), m.prIndex); ok {
+			setITermWTXBranchTab(pr.Branch)
+			return
+		}
+		setITermWTXTab()
+		return
+	}
+	if wt, ok := selectedWorktree(m.status, m.listIndex); ok {
+		setITermWTXBranchTab(wt.Branch)
+		return
+	}
+	setITermWTXTab()
 }
 
 func (m model) View() string {
