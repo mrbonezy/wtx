@@ -355,15 +355,21 @@ func gitOutputInDir(dir string, path string, args ...string) (string, error) {
 }
 
 func fallbackBaseBranchNoRemote(repoRoot string, gitPath string) string {
-	if localBranchExists(repoRoot, gitPath, "main") {
-		return "main"
-	}
+	mainExists := localBranchExists(repoRoot, gitPath, "main")
 	current, err := gitOutputInDir(repoRoot, gitPath, "branch", "--show-current")
 	if err == nil {
-		current = strings.TrimSpace(current)
-		if current != "" && current != "detached" {
-			return current
-		}
+		return chooseFallbackBaseNoRemote(mainExists, current)
+	}
+	return chooseFallbackBaseNoRemote(mainExists, "")
+}
+
+func chooseFallbackBaseNoRemote(mainExists bool, currentBranch string) string {
+	if mainExists {
+		return "main"
+	}
+	currentBranch = strings.TrimSpace(currentBranch)
+	if currentBranch != "" && currentBranch != "detached" {
+		return currentBranch
 	}
 	return "main"
 }
