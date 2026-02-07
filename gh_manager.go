@@ -500,7 +500,7 @@ func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, erro
 			defer func() { <-sem }()
 			count := 0
 			countKnown := false
-			if reviewRequired > 0 {
+			if reviewRequired > 0 && (status == "open" || status == "draft") {
 				countResult, countErr := approvedReviewsCount(ghPath, repoRoot, owner, name, number)
 				if countErr != nil {
 					results <- enrichResult{index: idx, ok: false}
