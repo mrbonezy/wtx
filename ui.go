@@ -47,6 +47,9 @@ type model struct {
 	errMsg               string
 	warnMsg              string
 	creatingBranch       string
+	creatingBaseRef      string
+	creatingExisting     bool
+	creatingStartedAt    time.Time
 	deletePath           string
 	deleteBranch         string
 	unlockPath           string
@@ -210,6 +213,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case createWorktreeDoneMsg:
 		m.mode = modeList
 		m.creatingBranch = ""
+		m.creatingBaseRef = ""
+		m.creatingExisting = false
+		m.creatingStartedAt = time.Time{}
 		m.actionCreate = false
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -311,6 +317,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mode = modeCreating
 				m.creatingBranch = branch
+				m.creatingBaseRef = m.status.BaseRef
+				m.creatingExisting = false
+				m.creatingStartedAt = time.Now()
 				m.newBranchInput.Blur()
 				m.newBranchInput.SetValue("")
 				m.errMsg = ""
@@ -466,6 +475,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.mode = modeCreating
 					m.creatingBranch = branch
+					m.creatingBaseRef = ""
+					m.creatingExisting = true
+					m.creatingStartedAt = time.Now()
 					m.branchInput.Blur()
 					m.branchSuggestions = nil
 					m.branchIndex = 0
@@ -917,9 +929,9 @@ func (m model) View() string {
 	if m.mode == modeCreating {
 		b.WriteString("\n")
 		b.WriteString(m.spinner.View())
-		b.WriteString(" Creating ")
-		b.WriteString(branchStyle.Render(m.creatingBranch))
-		b.WriteString("...\n")
+		b.WriteString(" ")
+		b.WriteString(renderCreateProgress(m))
+		b.WriteString("\n")
 	}
 	if m.warnMsg != "" {
 		b.WriteString(warnStyle.Render(m.warnMsg))
@@ -957,7 +969,7 @@ func (m model) View() string {
 	if m.viewPager.Page == prsPage {
 		help = "Press / to search, up/down to select, enter or P to open URL, esc clears/exits search, ←/→ switch views, r refreshes, q quits."
 	} else if m.mode == modeCreating {
-		help = "Creating worktree..."
+		help = "Provisioning worktree..."
 	} else if isCreateRow(m.listIndex, m.status) {
 		help = "Press enter for actions, ←/→ to switch views, r to refresh, q to quit."
 	} else if wt, ok := selectedWorktree(m.status, m.listIndex); ok {
@@ -990,6 +1002,28 @@ func renderViewHeader(page int) string {
 		}
 	}
 	return strings.Join(tabs, " | ") + "  " + subtleHintStyle.Render("← → change view")
+}
+
+func renderCreateProgress(m model) string {
+	branch := strings.TrimSpace(m.creatingBranch)
+	if branch == "" {
+		branch = "branch"
+	}
+	elapsed := ""
+	if !m.creatingStartedAt.IsZero() {
+		elapsed = fmt.Sprintf(" (%ds)", int(time.Since(m.creatingStartedAt).Seconds()))
+	}
+	if m.creatingExisting {
+		return fmt.Sprintf("Provisioning worktree for %s%s...", branchStyle.Render(branch), elapsed)
+	}
+	base := strings.TrimSpace(m.creatingBaseRef)
+	if base == "" {
+		base = strings.TrimSpace(m.status.BaseRef)
+	}
+	if base != "" {
+		return fmt.Sprintf("Provisioning %s from %s%s...", branchStyle.Render(branch), branchInlineStyle.Render(base), elapsed)
+	}
+	return fmt.Sprintf("Provisioning %s%s...", branchStyle.Render(branch), elapsed)
 }
 
 func renderPRSelector(prs []PRListData, cursor int, loading bool, loadingGlyph string, cellLoading bool) string {
