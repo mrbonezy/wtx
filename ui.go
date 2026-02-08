@@ -309,6 +309,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg = "Branch name required."
 					return m, nil
 				}
+				if !m.actionCreate {
+					row, ok := selectedWorktree(m.status, m.listIndex)
+					if !ok {
+						m.errMsg = "No worktree selected."
+						return m, nil
+					}
+					lock, err := m.mgr.AcquireWorktreeLock(row.Path)
+					if err != nil {
+						m.errMsg = err.Error()
+						return m, nil
+					}
+					if err := m.mgr.CheckoutNewBranch(row.Path, branch, m.status.BaseRef); err != nil {
+						lock.Release()
+						m.errMsg = err.Error()
+						return m, nil
+					}
+					m.errMsg = ""
+					m.warnMsg = ""
+					m.pendingPath = row.Path
+					m.pendingBranch = branch
+					m.pendingOpenShell = false
+					m.pendingLock = lock
+					return m, tea.Quit
+				}
 				m.mode = modeCreating
 				m.creatingBranch = branch
 				m.newBranchInput.Blur()

@@ -246,6 +246,29 @@ func (m *WorktreeManager) CheckoutExistingBranch(worktreePath string, branch str
 	return cmd.Run()
 }
 
+func (m *WorktreeManager) CheckoutNewBranch(worktreePath string, branch string, baseRef string) error {
+	worktreePath = strings.TrimSpace(worktreePath)
+	branch = strings.TrimSpace(branch)
+	baseRef = strings.TrimSpace(baseRef)
+	if worktreePath == "" {
+		return errors.New("worktree path required")
+	}
+	if branch == "" {
+		return errors.New("branch name required")
+	}
+	if baseRef == "" {
+		baseRef = "HEAD"
+	}
+	gitPath, repoRoot, err := requireGitContext(worktreePath)
+	if err != nil {
+		return err
+	}
+	baseRef = baseRefForWorktreeAdd(repoRoot, gitPath, baseRef)
+	cmd := exec.Command(gitPath, "checkout", "-b", branch, baseRef)
+	cmd.Dir = worktreePath
+	return cmd.Run()
+}
+
 func (m *WorktreeManager) AcquireWorktreeLock(worktreePath string) (*WorktreeLock, error) {
 	worktreePath = strings.TrimSpace(worktreePath)
 	if worktreePath == "" {
