@@ -4,10 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/paginator"
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,52 +14,43 @@ import (
 )
 
 type model struct {
-	mgr                  *WorktreeManager
-	orchestrator         *WorktreeOrchestrator
-	runner               *Runner
-	status               WorktreeStatus
-	listIndex            int
-	prIndex              int
-	prs                  []PRListData
-	viewPager            paginator.Model
-	ready                bool
-	width                int
-	height               int
-	mode                 uiMode
-	branchInput          textinput.Model
-	newBranchInput       textinput.Model
-	prSearchInput        textinput.Model
-	prSearchActive       bool
-	spinner              spinner.Model
-	ghSpinner            spinner.Model
-	ghPendingByBranch    map[string]bool
-	ghDataByBranch       map[string]PRData
-	ghLoadedKey          string
-	ghFetchingKey        string
-	prListLoadedRepo     string
-	prListFetchingRepo   string
-	prListEnrichingRepo  string
-	forcePREnrichRefresh bool
-	forceGHRefresh       bool
-	ghWarnMsg            string
-	errMsg               string
-	warnMsg              string
-	creatingBranch       string
-	deletePath           string
-	deleteBranch         string
-	unlockPath           string
-	unlockBranch         string
-	actionBranch         string
-	actionIndex          int
-	actionCreate         bool
-	branchOptions        []string
-	branchSuggestions    []string
-	branchIndex          int
-	pendingPath          string
-	pendingBranch        string
-	pendingOpenShell     bool
-	pendingLock          *WorktreeLock
-	autoActionPath       string
+	mgr               *WorktreeManager
+	orchestrator      *WorktreeOrchestrator
+	runner            *Runner
+	status            WorktreeStatus
+	listIndex         int
+	ready             bool
+	width             int
+	height            int
+	mode              uiMode
+	branchInput       textinput.Model
+	newBranchInput    textinput.Model
+	spinner           spinner.Model
+	ghSpinner         spinner.Model
+	ghPendingByBranch map[string]bool
+	ghDataByBranch    map[string]PRData
+	ghLoadedKey       string
+	ghFetchingKey     string
+	forceGHRefresh    bool
+	ghWarnMsg         string
+	errMsg            string
+	warnMsg           string
+	creatingBranch    string
+	deletePath        string
+	deleteBranch      string
+	unlockPath        string
+	unlockBranch      string
+	actionBranch      string
+	actionIndex       int
+	actionCreate      bool
+	branchOptions     []string
+	branchSuggestions []string
+	branchIndex       int
+	pendingPath       string
+	pendingBranch     string
+	pendingOpenShell  bool
+	pendingLock       *WorktreeLock
+	autoActionPath    string
 }
 
 func (m model) PendingWorktree() (string, string, bool, *WorktreeLock) {
@@ -75,12 +64,10 @@ func newModel() model {
 	m := model{mgr: mgr, orchestrator: orchestrator, runner: NewRunner(lockMgr)}
 	m.branchInput = newBranchInput()
 	m.newBranchInput = newCreateBranchInput()
-	m.prSearchInput = newPRSearchInput()
 	m.spinner = newSpinner()
 	m.ghSpinner = newGHSpinner()
 	m.ghPendingByBranch = map[string]bool{}
 	m.ghDataByBranch = map[string]PRData{}
-	m.viewPager = newViewPager()
 	return m
 }
 
@@ -96,7 +83,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case statusMsg:
 		m.status = WorktreeStatus(msg)
 		m.listIndex = clampListIndex(m.listIndex, m.status)
-		m.prIndex = clampPRIndex(m.prIndex, filteredPRs(m.prs, m.prSearchInput.Value()))
 		if m.autoActionPath != "" {
 			if idx, wt, ok := findWorktreeByPath(m.status, m.autoActionPath); ok {
 				m.listIndex = idx
@@ -112,39 +98,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if key == "" {
 			m.ghPendingByBranch = map[string]bool{}
 			m.ghDataByBranch = map[string]PRData{}
-			m.prs = nil
-			m.prIndex = 0
 			m.ghLoadedKey = ""
 			m.ghFetchingKey = ""
-			m.prListLoadedRepo = ""
-			m.prListFetchingRepo = ""
-			m.prListEnrichingRepo = ""
 			m.ghWarnMsg = ""
 			return m, nil
 		}
 		if key == m.ghLoadedKey || key == m.ghFetchingKey {
 			applyPRDataToStatus(&m.status, m.ghDataByBranch)
 		}
-		repo := strings.TrimSpace(m.status.RepoRoot)
-		fetchByBranch := shouldFetchByBranch(m.viewPager.Page, key, m.ghLoadedKey, m.ghFetchingKey)
-		fetchPRList := m.viewPager.Page == prsPage &&
-			repo != "" &&
-			repo != m.prListLoadedRepo &&
-			repo != m.prListFetchingRepo
-		if !fetchByBranch && !fetchPRList {
+		if !shouldFetchByBranch(key, m.ghLoadedKey, m.ghFetchingKey) {
 			// Local status polling runs every second; avoid re-fetching GH unless needed.
 			return m, nil
 		}
-		if fetchByBranch {
-			m.ghFetchingKey = key
-			m.ghPendingByBranch = pendingBranchesByName(m.status)
-		}
-		if fetchPRList {
-			m.prListFetchingRepo = repo
-		}
+		m.ghFetchingKey = key
+		m.ghPendingByBranch = pendingBranchesByName(m.status)
 		force := m.forceGHRefresh
 		m.forceGHRefresh = false
-		cmd := fetchGHDataCmd(m.orchestrator, m.status, key, force, fetchByBranch, fetchPRList, false)
+		cmd := fetchGHDataCmd(m.orchestrator, m.status, key, force)
 		return m, tea.Batch(cmd, m.ghSpinner.Tick)
 	case ghDataMsg:
 		if strings.TrimSpace(msg.repoRoot) == "" || strings.TrimSpace(m.status.RepoRoot) == "" {
@@ -153,53 +123,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.repoRoot != m.status.RepoRoot {
 			return m, nil
 		}
-		if msg.fetchedByBranch {
-			if strings.TrimSpace(msg.key) == "" || msg.key != m.ghFetchingKey {
-				msg.fetchedByBranch = false
-			}
+		if !msg.fetchedByBranch {
+			return m, nil
 		}
-		if msg.fetchedPRList {
-			if msg.repoRoot != m.prListFetchingRepo {
-				msg.fetchedPRList = false
-			}
-		}
-		if msg.fetchedPRListEnriched {
-			if msg.repoRoot != m.prListEnrichingRepo {
-				msg.fetchedPRListEnriched = false
-			}
-		}
-		if !msg.fetchedByBranch && !msg.fetchedPRList && !msg.fetchedPRListEnriched {
+		if strings.TrimSpace(msg.key) == "" || msg.key != m.ghFetchingKey {
 			// Ignore stale GH responses that raced with newer fetches.
 			return m, nil
 		}
 		m.ghWarnMsg = ghWarningFromErr(msg.err)
-		if msg.fetchedByBranch {
-			m.ghDataByBranch = msg.byBranch
-			applyPRDataToStatus(&m.status, m.ghDataByBranch)
-			m.ghPendingByBranch = map[string]bool{}
-			m.ghLoadedKey = msg.key
-			m.ghFetchingKey = ""
-		}
-		if msg.fetchedPRList {
-			m.prs = msg.prs
-			m.prListLoadedRepo = msg.repoRoot
-			m.prListFetchingRepo = ""
-			if m.viewPager.Page == prsPage && m.prListEnrichingRepo == "" {
-				m.prListEnrichingRepo = msg.repoRoot
-				forceEnrich := m.forcePREnrichRefresh
-				m.forcePREnrichRefresh = false
-				return m, tea.Batch(
-					fetchGHDataCmd(m.orchestrator, m.status, m.ghFetchingKey, forceEnrich, false, false, true),
-					m.ghSpinner.Tick,
-				)
-			}
-		}
-		if msg.fetchedPRListEnriched {
-			m.prs = msg.prs
-			m.prListLoadedRepo = msg.repoRoot
-			m.prListEnrichingRepo = ""
-		}
-		m.prIndex = clampPRIndex(m.prIndex, filteredPRs(m.prs, m.prSearchInput.Value()))
+		m.ghDataByBranch = msg.byBranch
+		applyPRDataToStatus(&m.status, m.ghDataByBranch)
+		m.ghPendingByBranch = map[string]bool{}
+		m.ghLoadedKey = msg.key
+		m.ghFetchingKey = ""
 		m.listIndex = clampListIndex(m.listIndex, m.status)
 		return m, nil
 	case pollStatusTickMsg:
@@ -227,7 +163,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append(cmds, cmd)
 			}
 		}
-		if len(m.ghPendingByBranch) > 0 || strings.TrimSpace(m.prListFetchingRepo) != "" || strings.TrimSpace(m.prListEnrichingRepo) != "" {
+		if len(m.ghPendingByBranch) > 0 {
 			var cmd tea.Cmd
 			m.ghSpinner, cmd = m.ghSpinner.Update(msg)
 			if cmd != nil {
@@ -511,140 +447,30 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
-		prevPage := m.viewPager.Page
-		updatedPager, pagerCmd := m.viewPager.Update(msg)
-		m.viewPager = updatedPager
-		if m.viewPager.Page != prevPage {
-			m.errMsg = ""
-			if m.viewPager.Page == prsPage {
-				repo := strings.TrimSpace(m.status.RepoRoot)
-				needPRList := repo != "" && repo != m.prListLoadedRepo && repo != m.prListFetchingRepo
-				if needPRList {
-					m.prListFetchingRepo = repo
-					return m, tea.Batch(
-						pagerCmd,
-						fetchGHDataCmd(m.orchestrator, m.status, m.ghFetchingKey, false, false, true, false),
-						m.ghSpinner.Tick,
-					)
-				}
-				return m, pagerCmd
-			}
-			m.prSearchActive = false
-			m.prSearchInput.Blur()
-			key := ghDataKeyForStatus(m.status)
-			if shouldFetchByBranch(m.viewPager.Page, key, m.ghLoadedKey, m.ghFetchingKey) {
-				m.ghFetchingKey = key
-				m.ghPendingByBranch = pendingBranchesByName(m.status)
-				force := m.forceGHRefresh
-				m.forceGHRefresh = false
-				return m, tea.Batch(
-					pagerCmd,
-					fetchGHDataCmd(m.orchestrator, m.status, key, force, true, false, false),
-					m.ghSpinner.Tick,
-				)
-			}
-			return m, pagerCmd
-		}
-		if m.viewPager.Page == prsPage {
-			if msg.String() == "/" {
-				m.prSearchActive = true
-				m.prSearchInput.Focus()
-				return m, nil
-			}
-			if m.prSearchActive {
-				if msg.Type == tea.KeyEsc {
-					if strings.TrimSpace(m.prSearchInput.Value()) != "" {
-						m.prSearchInput.SetValue("")
-						m.prIndex = 0
-						return m, nil
-					}
-					m.prSearchActive = false
-					m.prSearchInput.Blur()
-					return m, nil
-				}
-				if shouldHandlePRSearchInput(msg) {
-					var cmd tea.Cmd
-					m.prSearchInput, cmd = m.prSearchInput.Update(msg)
-					m.prIndex = clampPRIndex(m.prIndex, filteredPRs(m.prs, m.prSearchInput.Value()))
-					return m, cmd
-				}
-			}
-		}
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
 		case "r":
-			if m.viewPager.Page == prsPage {
-				repo := strings.TrimSpace(m.status.RepoRoot)
-				m.prListLoadedRepo = ""
-				m.prListFetchingRepo = ""
-				m.prListEnrichingRepo = ""
-				m.forcePREnrichRefresh = true
-				m.ghWarnMsg = ""
-				if repo == "" {
-					return m, fetchStatusCmd(m.orchestrator)
-				}
-				m.prListFetchingRepo = repo
-				return m, tea.Batch(
-					fetchGHDataCmd(m.orchestrator, m.status, m.ghFetchingKey, true, false, true, false),
-					m.ghSpinner.Tick,
-				)
-			}
 			// Force refresh on demand, including GH enrichment on next status update.
 			m.ghLoadedKey = ""
 			m.ghFetchingKey = ""
-			m.prListLoadedRepo = ""
-			m.prListFetchingRepo = ""
-			m.prListEnrichingRepo = ""
-			m.forcePREnrichRefresh = false
 			m.ghPendingByBranch = map[string]bool{}
 			m.ghDataByBranch = map[string]PRData{}
 			m.ghWarnMsg = ""
 			m.forceGHRefresh = true
 			return m, fetchStatusCmd(m.orchestrator)
 		case "up", "k":
-			if m.viewPager.Page == worktreePage {
-				if m.listIndex > 0 {
-					m.listIndex--
-				}
-			} else if m.prIndex > 0 {
-				m.prIndex--
+			if m.listIndex > 0 {
+				m.listIndex--
 			}
 			return m, nil
 		case "down", "j":
-			if m.viewPager.Page == worktreePage {
-				maxIndex := selectorRowCount(m.status) - 1
-				if m.listIndex < maxIndex {
-					m.listIndex++
-				}
-			} else {
-				maxIndex := len(filteredPRs(m.prs, m.prSearchInput.Value())) - 1
-				if m.prIndex < maxIndex {
-					m.prIndex++
-				}
+			maxIndex := selectorRowCount(m.status) - 1
+			if m.listIndex < maxIndex {
+				m.listIndex++
 			}
 			return m, nil
 		case "enter":
-			if m.viewPager.Page == prsPage {
-				pr, ok := selectedPR(filteredPRs(m.prs, m.prSearchInput.Value()), m.prIndex)
-				if !ok {
-					m.errMsg = "No PR selected."
-					return m, nil
-				}
-				if strings.TrimSpace(pr.URL) == "" {
-					m.errMsg = "No URL for selected PR."
-					return m, nil
-				}
-				if err := m.runner.OpenURL(pr.URL); err != nil {
-					m.errMsg = err.Error()
-					return m, nil
-				}
-				m.errMsg = ""
-				return m, nil
-			}
-			if m.viewPager.Page != worktreePage {
-				return m, nil
-			}
 			if isCreateRow(m.listIndex, m.status) {
 				m.mode = modeAction
 				m.actionCreate = true
@@ -670,9 +496,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "s":
-			if m.viewPager.Page != worktreePage {
-				return m, nil
-			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if isOrphanedPath(m.status, row.Path) {
 					m.errMsg = "Cannot open shell for orphaned worktree."
@@ -687,9 +510,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		case "d":
-			if m.viewPager.Page != worktreePage {
-				return m, nil
-			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if err := m.mgr.CanDeleteWorktree(row.Path); err != nil {
 					m.errMsg = err.Error()
@@ -702,23 +522,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "p", "P":
-			if m.viewPager.Page == prsPage {
-				pr, ok := selectedPR(filteredPRs(m.prs, m.prSearchInput.Value()), m.prIndex)
-				if !ok {
-					m.errMsg = "No PR selected."
-					return m, nil
-				}
-				if strings.TrimSpace(pr.URL) == "" {
-					m.errMsg = "No URL for selected PR."
-					return m, nil
-				}
-				if err := m.runner.OpenURL(pr.URL); err != nil {
-					m.errMsg = err.Error()
-					return m, nil
-				}
-				m.errMsg = ""
-				return m, nil
-			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if strings.TrimSpace(row.PRURL) == "" {
 					m.errMsg = "No PR URL for selected worktree."
@@ -732,9 +535,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		case "u":
-			if m.viewPager.Page != worktreePage {
-				return m, nil
-			}
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
 				if isOrphanedPath(m.status, row.Path) {
 					m.errMsg = "Cannot unlock orphaned worktree."
@@ -760,28 +560,19 @@ func syncTabTitleWithSelection(m model) {
 		setITermWTXTab()
 		return
 	}
-	if m.viewPager.Page == prsPage {
-		if pr, ok := selectedPR(filteredPRs(m.prs, m.prSearchInput.Value()), m.prIndex); ok {
-			setITermWTXBranchTab(pr.Branch)
-			return
-		}
-		setITermWTXTab()
-		return
-	}
 	if wt, ok := selectedWorktree(m.status, m.listIndex); ok {
 		setITermWTXBranchTab(wt.Branch)
 		return
 	}
 	setITermWTXTab()
 }
-
 func (m model) View() string {
 	var b strings.Builder
 	showTopBar := m.ready && m.status.InRepo && m.mode == modeList
 	if showTopBar {
 		b.WriteString(bannerStyle.Render("WTX"))
 		b.WriteString("  ")
-		b.WriteString(renderViewHeader(m.viewPager.Page))
+		b.WriteString(renderViewHeader())
 		b.WriteString("\n\n")
 	} else {
 		b.WriteString(bannerStyle.Render("WTX"))
@@ -892,19 +683,8 @@ func (m model) View() string {
 		b.WriteString("\nAre you sure? (y/N)\n")
 		return b.String()
 	}
-	if m.viewPager.Page == prsPage {
-		initialPRLoading := strings.TrimSpace(m.prListFetchingRepo) != ""
-		enrichmentLoading := strings.TrimSpace(m.prListEnrichingRepo) != "" && !initialPRLoading
-		filtered := filteredPRs(m.prs, m.prSearchInput.Value())
-		if m.prSearchActive {
-			b.WriteString("Filter PRs (/):\n")
-			b.WriteString(inputStyle.Render(m.prSearchInput.View()))
-			b.WriteString("\n")
-		}
-		b.WriteString(baseStyle.Render(renderPRSelector(filtered, m.prIndex, initialPRLoading, m.ghSpinner.View(), enrichmentLoading)))
-	} else {
-		b.WriteString(baseStyle.Render(renderSelector(m.status, m.listIndex, m.ghPendingByBranch, m.ghSpinner.View())))
-	}
+
+	b.WriteString(baseStyle.Render(renderSelector(m.status, m.listIndex, m.ghPendingByBranch, m.ghSpinner.View())))
 	b.WriteString("\n")
 	if m.status.Err != nil {
 		b.WriteString(errorStyle.Render(fmt.Sprintf("Error: %v", m.status.Err)))
@@ -937,180 +717,39 @@ func (m model) View() string {
 			b.WriteString("\n")
 		}
 	}
-	if m.viewPager.Page == worktreePage {
-		selectedPath := currentWorktreePath(m.status, m.listIndex)
-		if selectedPath != "" {
-			b.WriteString("\n")
-			b.WriteString(secondaryStyle.Render(selectedPath))
-			b.WriteString("\n")
-		}
+	selectedPath := currentWorktreePath(m.status, m.listIndex)
+	if selectedPath != "" {
+		b.WriteString("\n")
+		b.WriteString(secondaryStyle.Render(selectedPath))
+		b.WriteString("\n")
 	}
-	if m.viewPager.Page == prsPage {
-		if pr, ok := selectedPR(filteredPRs(m.prs, m.prSearchInput.Value()), m.prIndex); ok && strings.TrimSpace(pr.URL) != "" {
-			b.WriteString("\n")
-			b.WriteString(secondaryStyle.Render(pr.URL))
-			b.WriteString("\n")
-		}
-	}
+
 	b.WriteString("\n")
-	help := "Press ←/→ to switch views, r to refresh, q to quit."
-	if m.viewPager.Page == prsPage {
-		help = "Press / to search, up/down to select, enter or P to open URL, esc clears/exits search, ←/→ switch views, r refreshes, q quits."
-	} else if m.mode == modeCreating {
+	help := "Press r to refresh, q to quit."
+	if m.mode == modeCreating {
 		help = "Creating worktree..."
 	} else if isCreateRow(m.listIndex, m.status) {
-		help = "Press enter for actions, ←/→ to switch views, r to refresh, q to quit."
+		help = "Press enter for actions, r to refresh, q to quit."
 	} else if wt, ok := selectedWorktree(m.status, m.listIndex); ok {
 		prHint := ""
 		if strings.TrimSpace(wt.PRURL) != "" {
 			prHint = ", p to open PR"
 		}
 		if !wt.Available && !isOrphanedPath(m.status, wt.Path) {
-			help = "Press u to unlock, d to delete" + prHint + ", ←/→ to switch views, r to refresh, q to quit."
+			help = "Press u to unlock, d to delete" + prHint + ", r to refresh, q to quit."
 		} else {
-			help = "Press enter for actions, s for shell, d to delete" + prHint + ", ←/→ to switch views, r to refresh, q to quit."
+			help = "Press enter for actions, s for shell, d to delete" + prHint + ", r to refresh, q to quit."
 		}
 	}
 	b.WriteString(help + "\n")
 	return b.String()
 }
-
-func renderViewHeader(page int) string {
-	tabs := []string{
-		"Worktrees",
-		"PRs",
-	}
-	activeTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("252"))
-	inactiveTabStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("244"))
-	for i := range tabs {
-		if i == page {
-			tabs[i] = activeTabStyle.Render(tabs[i])
-		} else {
-			tabs[i] = inactiveTabStyle.Render(tabs[i])
-		}
-	}
-	return strings.Join(tabs, " | ") + "  " + subtleHintStyle.Render("← → change view")
+func renderViewHeader() string {
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("252")).Render("Worktrees")
 }
-
-func renderPRSelector(prs []PRListData, cursor int, loading bool, loadingGlyph string, cellLoading bool) string {
-	rows := make([]uiview.PRRow, 0, len(prs))
-	for _, pr := range prs {
-		row := uiview.BuildPRRow(
-			pr.Number,
-			pr.Branch,
-			pr.Title,
-			pr.CICompleted,
-			pr.CITotal,
-			string(pr.CIState),
-			pr.CIFailingNames,
-			pr.ReviewApproved,
-			pr.ReviewRequired,
-			pr.ReviewKnown,
-			pr.UnresolvedComments,
-			pr.ResolvedComments,
-			pr.CommentThreadsTotal,
-			pr.CommentsKnown,
-			pr.Status,
-		)
-		if cellLoading {
-			row.CILabel = loadingGlyph
-			row.ApprovalLabel = loadingGlyph
-		}
-		rows = append(rows, row)
-	}
-	return uiview.RenderPRSelector(rows, cursor, loading, loadingGlyph, viewStyles())
-}
-
-func selectedPR(prs []PRListData, index int) (PRListData, bool) {
-	if index < 0 || index >= len(prs) {
-		return PRListData{}, false
-	}
-	return prs[index], true
-}
-
-func shouldHandlePRSearchInput(msg tea.KeyMsg) bool {
-	switch msg.Type {
-	case tea.KeyRunes, tea.KeySpace, tea.KeyBackspace, tea.KeyDelete:
-		return true
-	default:
-		return false
-	}
-}
-
-func filteredPRs(prs []PRListData, query string) []PRListData {
-	q := strings.TrimSpace(strings.ToLower(query))
-	if q == "" {
-		return prs
-	}
-	tokens := strings.Fields(q)
-	out := make([]PRListData, 0, len(prs))
-	for _, pr := range prs {
-		haystack := prSearchHaystack(pr)
-		matched := true
-		for _, token := range tokens {
-			if !fuzzyContains(haystack, token) {
-				matched = false
-				break
-			}
-		}
-		if matched {
-			out = append(out, pr)
-		}
-	}
-	return out
-}
-
-func prSearchHaystack(pr PRListData) string {
-	return strings.ToLower(strings.Join([]string{
-		fmt.Sprintf("%d", pr.Number),
-		fmt.Sprintf("#%d", pr.Number),
-		pr.Branch,
-		pr.Title,
-		pr.Status,
-		pr.ReviewDecision,
-		string(pr.CIState),
-		fmt.Sprintf("%d/%d", pr.CICompleted, pr.CITotal),
-		pr.CIFailingNames,
-		fmt.Sprintf("%d", pr.ResolvedComments),
-		fmt.Sprintf("%d", pr.CommentThreadsTotal),
-		pr.URL,
-	}, " "))
-}
-
-func fuzzyContains(haystack string, needle string) bool {
-	if needle == "" {
-		return true
-	}
-	if strings.Contains(haystack, needle) {
-		return true
-	}
-	h := []rune(haystack)
-	n := []rune(needle)
-	j := 0
-	for i := 0; i < len(h) && j < len(n); i++ {
-		if h[i] == n[j] {
-			j++
-		}
-	}
-	return j == len(n)
-}
-
-func clampPRIndex(index int, prs []PRListData) int {
-	if len(prs) == 0 {
-		return 0
-	}
-	if index < 0 {
-		return 0
-	}
-	if index >= len(prs) {
-		return len(prs) - 1
-	}
-	return index
-}
-
-func shouldFetchByBranch(page int, key string, loadedKey string, fetchingKey string) bool {
+func shouldFetchByBranch(key string, loadedKey string, fetchingKey string) bool {
 	key = strings.TrimSpace(key)
-	if page != worktreePage || key == "" {
+	if key == "" {
 		return false
 	}
 	return key != strings.TrimSpace(loadedKey) && key != strings.TrimSpace(fetchingKey)
@@ -1119,14 +758,11 @@ func shouldFetchByBranch(page int, key string, loadedKey string, fetchingKey str
 type statusMsg WorktreeStatus
 type pollStatusTickMsg time.Time
 type ghDataMsg struct {
-	repoRoot              string
-	key                   string
-	byBranch              map[string]PRData
-	prs                   []PRListData
-	fetchedByBranch       bool
-	fetchedPRList         bool
-	fetchedPRListEnriched bool
-	err                   error
+	repoRoot        string
+	key             string
+	byBranch        map[string]PRData
+	fetchedByBranch bool
+	err             error
 }
 type createWorktreeDoneMsg struct {
 	created WorktreeInfo
@@ -1148,73 +784,27 @@ func pollStatusTickCmd() tea.Cmd {
 	})
 }
 
-func fetchGHDataCmd(orchestrator *WorktreeOrchestrator, status WorktreeStatus, key string, force bool, includeByBranch bool, includePRList bool, includePRListEnriched bool) tea.Cmd {
+func fetchGHDataCmd(orchestrator *WorktreeOrchestrator, status WorktreeStatus, key string, force bool) tea.Cmd {
 	return func() tea.Msg {
 		var byBranch map[string]PRData
-		var prs []PRListData
 		var byBranchErr error
-		var prListErr error
 		if orchestrator == nil {
-			if includeByBranch {
+			byBranch = map[string]PRData{}
+		} else {
+			byBranch, byBranchErr = orchestrator.PRDataForStatusWithError(status, force)
+			if byBranch == nil {
 				byBranch = map[string]PRData{}
 			}
-			if includePRList {
-				prs = []PRListData{}
-			}
-			if includePRListEnriched {
-				prs = []PRListData{}
-			}
-		} else {
-			var wg sync.WaitGroup
-			if includeByBranch {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					byBranch, byBranchErr = orchestrator.PRDataForStatusWithError(status, force)
-					if byBranch == nil {
-						byBranch = map[string]PRData{}
-					}
-				}()
-			}
-			if includePRList {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					prs, prListErr = orchestrator.PRsForStatusWithError(status, force, false)
-					if prs == nil {
-						prs = []PRListData{}
-					}
-				}()
-			}
-			if includePRListEnriched {
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					prs, prListErr = orchestrator.PRsForStatusWithError(status, force, true)
-					if prs == nil {
-						prs = []PRListData{}
-					}
-				}()
-			}
-			wg.Wait()
-		}
-		err := byBranchErr
-		if err == nil {
-			err = prListErr
 		}
 		return ghDataMsg{
-			repoRoot:              status.RepoRoot,
-			key:                   key,
-			byBranch:              byBranch,
-			prs:                   prs,
-			fetchedByBranch:       includeByBranch,
-			fetchedPRList:         includePRList,
-			fetchedPRListEnriched: includePRListEnriched,
-			err:                   err,
+			repoRoot:        status.RepoRoot,
+			key:             key,
+			byBranch:        byBranch,
+			fetchedByBranch: true,
+			err:             byBranchErr,
 		}
 	}
 }
-
 func createWorktreeCmd(mgr *WorktreeManager, branch string, baseRef string) tea.Cmd {
 	return func() tea.Msg {
 		created, err := mgr.CreateWorktree(branch, baseRef)
@@ -1289,7 +879,6 @@ var (
 	branchStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	branchInlineStyle   = lipgloss.NewStyle().Bold(true)
 	warnStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
-	subtleHintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
 	inputStyle          = lipgloss.NewStyle().
 				Padding(0, 1)
 )
@@ -1315,11 +904,6 @@ func max(a int, b int) int {
 type uiMode int
 
 const (
-	worktreePage = 0
-	prsPage      = 1
-)
-
-const (
 	modeList uiMode = iota
 	modeCreating
 	modeDelete
@@ -1328,11 +912,6 @@ const (
 	modeBranchName
 	modeBranchPick
 )
-
-func newViewPager() paginator.Model {
-	p := paginator.New(paginator.WithTotalPages(2))
-	return p
-}
 
 func newBranchInput() textinput.Model {
 	ti := textinput.New()
@@ -1347,15 +926,6 @@ func newCreateBranchInput() textinput.Model {
 	ti.Placeholder = "feature/my-branch"
 	ti.CharLimit = 200
 	ti.Width = 40
-	return ti
-}
-
-func newPRSearchInput() textinput.Model {
-	ti := textinput.New()
-	ti.Placeholder = "fuzzy search by number, branch, title, status..."
-	ti.CharLimit = 200
-	ti.Width = 60
-	ti.Focus()
 	return ti
 }
 

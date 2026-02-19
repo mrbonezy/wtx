@@ -22,18 +22,15 @@ const (
 	PRCIFail       PRCIState = "fail"
 	PRCISuccess    PRCIState = "success"
 
-	ghPRListFullTimeout     = 30 * time.Second
-	ghPRListFallbackTimeout = 20 * time.Second
 	ghPRHeadFullTimeout     = 15 * time.Second
 	ghPRHeadFallbackTimeout = 10 * time.Second
 	ghUnresolvedPRTimeout   = 8 * time.Second
 	ghProtectionTimeout     = 5 * time.Second
 	ghReviewCountTimeout    = 6 * time.Second
-	fullPRListFields        = "number,url,headRefName,baseRefName,title,isDraft,state,mergeStateStatus,updatedAt,mergedAt,reviewDecision,statusCheckRollup"
-	fallbackPRListFields    = "number,url,headRefName,baseRefName,title,isDraft,state,mergeStateStatus,updatedAt,mergedAt,reviewDecision"
-	defaultPRListFetchLimit = "15"
-	maxBranchFetchParallel  = 6
-	maxPREnrichmentParallel = 6
+
+	fullPRListFields       = "number,url,headRefName,baseRefName,title,isDraft,state,mergeStateStatus,updatedAt,mergedAt,reviewDecision,statusCheckRollup"
+	fallbackPRListFields   = "number,url,headRefName,baseRefName,title,isDraft,state,mergeStateStatus,updatedAt,mergedAt,reviewDecision"
+	maxBranchFetchParallel = 6
 )
 
 type PRData struct {
@@ -57,47 +54,16 @@ type PRData struct {
 	BaseStatus          string
 }
 
-type PRListData struct {
-	Number              int
-	URL                 string
-	Branch              string
-	Title               string
-	Status              string
-	ReviewDecision      string
-	Approved            bool
-	ReviewApproved      int
-	ReviewRequired      int
-	ReviewKnown         bool
-	CIState             PRCIState
-	CICompleted         int
-	CITotal             int
-	CIFailingNames      string
-	UnresolvedComments  int
-	ResolvedComments    int
-	CommentThreadsTotal int
-	UpdatedAt           time.Time
-	CommentsKnown       bool
-	MergeStateStatus    string
-	BaseStatus          string
-}
-
 type GHManager struct {
-	mu                  sync.Mutex
-	branchCache         map[string]map[string]cachedBranchPRData
-	prListCache         map[string]cachedPRListData
-	prListEnrichedCache map[string]cachedPRListData
-	ttl                 time.Duration
+	mu          sync.Mutex
+	branchCache map[string]map[string]cachedBranchPRData
+	ttl         time.Duration
 }
 
 type cachedBranchPRData struct {
 	fetchedAt time.Time
 	found     bool
 	data      PRData
-}
-
-type cachedPRListData struct {
-	fetchedAt time.Time
-	prList    []PRListData
 }
 
 type ghPR struct {
@@ -154,17 +120,10 @@ type ghPullReview struct {
 	} `json:"user"`
 }
 
-type requiredApprovalsInfo struct {
-	count int
-	known bool
-}
-
 func NewGHManager() *GHManager {
 	return &GHManager{
-		branchCache:         make(map[string]map[string]cachedBranchPRData),
-		prListCache:         make(map[string]cachedPRListData),
-		prListEnrichedCache: make(map[string]cachedPRListData),
-		ttl:                 20 * time.Second,
+		branchCache: make(map[string]map[string]cachedBranchPRData),
+		ttl:         20 * time.Second,
 	}
 }
 
@@ -174,28 +133,6 @@ func (m *GHManager) PRDataByBranch(repoRoot string, branches []string) (map[stri
 
 func (m *GHManager) PRDataByBranchForce(repoRoot string, branches []string) (map[string]PRData, error) {
 	return m.prDataByBranch(repoRoot, branches, true)
-}
-
-func (m *GHManager) PRs(repoRoot string, force bool) ([]PRListData, error) {
-	repoRoot = strings.TrimSpace(repoRoot)
-	if repoRoot == "" {
-		return []PRListData{}, nil
-	}
-	prs, fetchErr := m.ensurePRList(repoRoot, force)
-	out := make([]PRListData, len(prs))
-	copy(out, prs)
-	return out, fetchErr
-}
-
-func (m *GHManager) PRsEnriched(repoRoot string, force bool) ([]PRListData, error) {
-	repoRoot = strings.TrimSpace(repoRoot)
-	if repoRoot == "" {
-		return []PRListData{}, nil
-	}
-	prs, fetchErr := m.ensurePRListEnriched(repoRoot, force)
-	out := make([]PRListData, len(prs))
-	copy(out, prs)
-	return out, fetchErr
 }
 
 func (m *GHManager) prDataByBranch(repoRoot string, branches []string, force bool) (map[string]PRData, error) {
@@ -271,302 +208,6 @@ func (m *GHManager) prDataByBranch(repoRoot string, branches []string, force boo
 	return out, fetchErr
 }
 
-func (m *GHManager) ensurePRList(repoRoot string, force bool) ([]PRListData, error) {
-	now := time.Now()
-	m.mu.Lock()
-	cached, ok := m.prListCache[repoRoot]
-	m.mu.Unlock()
-	if !force && ok && now.Sub(cached.fetchedAt) < m.ttl {
-		out := make([]PRListData, len(cached.prList))
-		copy(out, cached.prList)
-		return out, nil
-	}
-	prs, err := m.fetchRepoPRList(repoRoot)
-	if err != nil {
-		if ok {
-			out := make([]PRListData, len(cached.prList))
-			copy(out, cached.prList)
-			return out, err
-		}
-		return []PRListData{}, err
-	}
-	m.mu.Lock()
-	m.prListCache[repoRoot] = cachedPRListData{
-		fetchedAt: time.Now(),
-		prList:    prs,
-	}
-	m.mu.Unlock()
-	out := make([]PRListData, len(prs))
-	copy(out, prs)
-	return out, nil
-}
-
-func (m *GHManager) ensurePRListEnriched(repoRoot string, force bool) ([]PRListData, error) {
-	now := time.Now()
-	m.mu.Lock()
-	cached, ok := m.prListEnrichedCache[repoRoot]
-	m.mu.Unlock()
-	if !force && ok && now.Sub(cached.fetchedAt) < m.ttl {
-		out := make([]PRListData, len(cached.prList))
-		copy(out, cached.prList)
-		return out, nil
-	}
-	prs, err := m.fetchRepoPRListEnriched(repoRoot)
-	if err != nil {
-		if ok {
-			out := make([]PRListData, len(cached.prList))
-			copy(out, cached.prList)
-			return out, err
-		}
-		return []PRListData{}, err
-	}
-	m.mu.Lock()
-	m.prListEnrichedCache[repoRoot] = cachedPRListData{
-		fetchedAt: time.Now(),
-		prList:    prs,
-	}
-	m.mu.Unlock()
-	out := make([]PRListData, len(prs))
-	copy(out, prs)
-	return out, nil
-}
-
-func (m *GHManager) fetchRepoPRList(repoRoot string) ([]PRListData, error) {
-	if _, err := exec.LookPath("gh"); err != nil {
-		return nil, err
-	}
-	ghPath, err := exec.LookPath("gh")
-	if err != nil {
-		return nil, err
-	}
-	prs, err := ghPRList(ghPath, repoRoot, fullPRListFields, defaultPRListFetchLimit, ghPRListFullTimeout)
-	if err != nil {
-		// Large monorepos can fail this heavier query; retry once with a slimmer field set.
-		prs, err = ghPRList(ghPath, repoRoot, fallbackPRListFields, defaultPRListFetchLimit, ghPRListFallbackTimeout)
-		if err != nil {
-			return nil, err
-		}
-	}
-	prList := make([]PRListData, 0, len(prs))
-	for _, pr := range prs {
-		branch := strings.TrimSpace(pr.HeadRefName)
-		if branch == "" {
-			continue
-		}
-		updatedAt := parseGitHubTime(pr.UpdatedAt)
-		ciState, ciDone, ciTotal, failingNames := summarizeCI(pr.StatusCheckRollup)
-		baseStatus := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
-		reviewApproved, reviewRequired, reviewKnown := reviewProgressFromDecision(pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
-		reviewSatisfied := hasSufficientApprovals(reviewApproved, reviewRequired, reviewKnown, pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
-		status := computePRStatus(pr.State, pr.MergedAt, pr.IsDraft, pr.MergeStateStatus, reviewSatisfied, ciState, 0, false)
-		prList = append(prList, PRListData{
-			Number:              pr.Number,
-			URL:                 strings.TrimSpace(pr.URL),
-			Branch:              branch,
-			Title:               strings.TrimSpace(pr.Title),
-			Status:              status,
-			ReviewDecision:      strings.TrimSpace(pr.ReviewDecision),
-			Approved:            strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"),
-			ReviewApproved:      reviewApproved,
-			ReviewRequired:      reviewRequired,
-			ReviewKnown:         reviewKnown,
-			CIState:             ciState,
-			CICompleted:         ciDone,
-			CITotal:             ciTotal,
-			CIFailingNames:      failingNames,
-			ResolvedComments:    0,
-			CommentThreadsTotal: 0,
-			UpdatedAt:           updatedAt,
-			CommentsKnown:       false,
-			MergeStateStatus:    strings.TrimSpace(pr.MergeStateStatus),
-			BaseStatus:          baseStatus,
-		})
-	}
-	sort.SliceStable(prList, func(i, j int) bool {
-		iBucket := prStatusSortBucket(prList[i].Status)
-		jBucket := prStatusSortBucket(prList[j].Status)
-		if iBucket != jBucket {
-			return iBucket < jBucket
-		}
-		if !prList[i].UpdatedAt.Equal(prList[j].UpdatedAt) {
-			return prList[i].UpdatedAt.After(prList[j].UpdatedAt)
-		}
-		return prList[i].Number > prList[j].Number
-	})
-	return prList, nil
-}
-
-func (m *GHManager) fetchRepoPRListEnriched(repoRoot string) ([]PRListData, error) {
-	if _, err := exec.LookPath("gh"); err != nil {
-		return nil, err
-	}
-	ghPath, err := exec.LookPath("gh")
-	if err != nil {
-		return nil, err
-	}
-	prs, err := ghPRList(ghPath, repoRoot, fullPRListFields, defaultPRListFetchLimit, ghPRListFullTimeout)
-	if err != nil {
-		prs, err = ghPRList(ghPath, repoRoot, fallbackPRListFields, defaultPRListFetchLimit, ghPRListFallbackTimeout)
-		if err != nil {
-			return nil, err
-		}
-	}
-	owner, name, err := resolveGitHubRepo(repoRoot)
-	if err != nil {
-		owner, name = "", ""
-	}
-	requiredByBase := map[string]requiredApprovalsInfo{}
-	if owner != "" && name != "" {
-		requiredByBase = fetchRequiredApprovalsByBaseRefs(ghPath, repoRoot, owner, name, prs)
-	}
-	prList := make([]PRListData, 0, len(prs))
-	for _, pr := range prs {
-		branch := strings.TrimSpace(pr.HeadRefName)
-		if branch == "" {
-			continue
-		}
-		updatedAt := parseGitHubTime(pr.UpdatedAt)
-		ciState, ciDone, ciTotal, failingNames := summarizeCI(pr.StatusCheckRollup)
-		baseStatus := normalizePRStatus(pr.State, pr.MergedAt, pr.IsDraft)
-		reviewApproved, reviewRequired, reviewKnown := reviewProgressFromDecision(pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
-		base := strings.TrimSpace(pr.BaseRefName)
-		if info, ok := requiredByBase[base]; ok && info.known {
-			reviewRequired = info.count
-			reviewKnown = true
-		}
-		reviewSatisfied := hasSufficientApprovals(reviewApproved, reviewRequired, reviewKnown, pr.ReviewDecision, strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"))
-		status := computePRStatus(pr.State, pr.MergedAt, pr.IsDraft, pr.MergeStateStatus, reviewSatisfied, ciState, 0, false)
-		prList = append(prList, PRListData{
-			Number:              pr.Number,
-			URL:                 strings.TrimSpace(pr.URL),
-			Branch:              branch,
-			Title:               strings.TrimSpace(pr.Title),
-			Status:              status,
-			ReviewDecision:      strings.TrimSpace(pr.ReviewDecision),
-			Approved:            strings.EqualFold(strings.TrimSpace(pr.ReviewDecision), "approved"),
-			ReviewApproved:      reviewApproved,
-			ReviewRequired:      reviewRequired,
-			ReviewKnown:         reviewKnown,
-			CIState:             ciState,
-			CICompleted:         ciDone,
-			CITotal:             ciTotal,
-			CIFailingNames:      failingNames,
-			UnresolvedComments:  0,
-			ResolvedComments:    0,
-			CommentThreadsTotal: 0,
-			UpdatedAt:           updatedAt,
-			CommentsKnown:       false,
-			MergeStateStatus:    strings.TrimSpace(pr.MergeStateStatus),
-			BaseStatus:          baseStatus,
-		})
-	}
-	sort.SliceStable(prList, func(i, j int) bool {
-		iBucket := prStatusSortBucket(prList[i].Status)
-		jBucket := prStatusSortBucket(prList[j].Status)
-		if iBucket != jBucket {
-			return iBucket < jBucket
-		}
-		if !prList[i].UpdatedAt.Equal(prList[j].UpdatedAt) {
-			return prList[i].UpdatedAt.After(prList[j].UpdatedAt)
-		}
-		return prList[i].Number > prList[j].Number
-	})
-
-	if owner == "" || name == "" {
-		return prList, nil
-	}
-
-	type enrichResult struct {
-		index         int
-		count         int
-		countKnown    bool
-		unresolved    int
-		resolved      int
-		total         int
-		commentsKnown bool
-		ok            bool
-	}
-	results := make(chan enrichResult, len(prList))
-	sem := make(chan struct{}, maxPREnrichmentParallel)
-	var wg sync.WaitGroup
-	for i := range prList {
-		if prList[i].Number <= 0 {
-			continue
-		}
-		wg.Add(1)
-		go func(idx int, number int, baseStatus string, reviewRequired int) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			count := 0
-			countKnown := false
-			if reviewRequired > 0 && (baseStatus == "open" || baseStatus == "draft") {
-				countResult, countErr := approvedReviewsCount(ghPath, repoRoot, owner, name, number)
-				if countErr != nil {
-					results <- enrichResult{index: idx, ok: false}
-					return
-				}
-				count = countResult
-				countKnown = true
-			}
-			unresolved := 0
-			resolved := 0
-			total := 0
-			commentsKnown := false
-			if baseStatus == "open" || baseStatus == "draft" {
-				if counts, unresolvedErr := reviewThreadCountsForPR(ghPath, repoRoot, owner, name, number); unresolvedErr == nil {
-					unresolved = counts.Unresolved
-					resolved = counts.Resolved
-					total = counts.Total
-					commentsKnown = true
-				}
-			}
-			results <- enrichResult{index: idx, count: count, countKnown: countKnown, unresolved: unresolved, resolved: resolved, total: total, commentsKnown: commentsKnown, ok: true}
-		}(i, prList[i].Number, strings.TrimSpace(strings.ToLower(prList[i].BaseStatus)), prList[i].ReviewRequired)
-	}
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-	for res := range results {
-		if !res.ok {
-			continue
-		}
-		if res.countKnown {
-			prList[res.index].ReviewApproved = res.count
-			prList[res.index].ReviewKnown = true
-			prList[res.index].ReviewRequired, _ = ensureRequiredAtLeastApproved(
-				prList[res.index].ReviewApproved,
-				prList[res.index].ReviewKnown,
-				prList[res.index].ReviewRequired,
-				prList[res.index].ReviewRequired > 0,
-			)
-		}
-		prList[res.index].CommentsKnown = res.commentsKnown
-		prList[res.index].UnresolvedComments = res.unresolved
-		prList[res.index].ResolvedComments = res.resolved
-		prList[res.index].CommentThreadsTotal = res.total
-		reviewSatisfied := hasSufficientApprovals(
-			prList[res.index].ReviewApproved,
-			prList[res.index].ReviewRequired,
-			prList[res.index].ReviewKnown,
-			prList[res.index].ReviewDecision,
-			prList[res.index].Approved,
-		)
-		prList[res.index].Status = computePRStatus(
-			prList[res.index].BaseStatus,
-			"",
-			prList[res.index].BaseStatus == "draft",
-			prList[res.index].MergeStateStatus,
-			reviewSatisfied,
-			prList[res.index].CIState,
-			prList[res.index].UnresolvedComments,
-			prList[res.index].CommentsKnown,
-		)
-	}
-	return prList, nil
-}
-
 func (m *GHManager) fetchPRDataForBranches(repoRoot string, branches []string) (map[string]PRData, error) {
 	if len(branches) == 0 {
 		return map[string]PRData{}, nil
@@ -625,43 +266,6 @@ func (m *GHManager) fetchPRDataForBranches(repoRoot string, branches []string) (
 		}
 	}
 	return out, firstErr
-}
-
-func ghPRList(ghPath string, repoRoot string, fields string, limit string, timeout time.Duration) ([]ghPR, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	listLimit := strings.TrimSpace(limit)
-	if listLimit == "" {
-		listLimit = defaultPRListFetchLimit
-	}
-	cmd := exec.CommandContext(
-		ctx,
-		ghPath,
-		"pr",
-		"list",
-		"--state", "all",
-		"--author", "@me",
-		"--json", fields,
-		"--limit", listLimit,
-	)
-	cmd.Dir = repoRoot
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return nil, fmt.Errorf("gh pr list timed out after %s", timeout.Round(time.Second))
-		}
-		msg := strings.TrimSpace(string(out))
-		if msg == "" {
-			return nil, err
-		}
-		return nil, fmt.Errorf("%w: %s", err, msg)
-	}
-	var prs []ghPR
-	if err := json.Unmarshal(out, &prs); err != nil {
-		return nil, err
-	}
-	return prs, nil
 }
 
 func ghPRDataForBranch(ghPath string, repoRoot string, owner string, name string, branch string) (PRData, bool, error) {
@@ -800,21 +404,6 @@ func ensureRequiredAtLeastApproved(approvedCount int, approvedKnown bool, requir
 	return requiredCount, requiredKnown
 }
 
-func reviewProgressFromDecision(reviewDecision string, approved bool) (int, int, bool) {
-	decision := strings.ToUpper(strings.TrimSpace(reviewDecision))
-	switch decision {
-	case "APPROVED":
-		return 1, 1, true
-	case "REVIEW_REQUIRED", "CHANGES_REQUESTED":
-		return 0, 1, true
-	default:
-		if approved {
-			return 1, 1, true
-		}
-		return 0, 0, false
-	}
-}
-
 func requiredApprovalsForBaseBranch(ghPath string, repoRoot string, owner string, name string, baseRefName string) (int, bool, error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/branches/%s/protection", owner, name, url.PathEscape(baseRefName))
 	ctx, cancel := context.WithTimeout(context.Background(), ghProtectionTimeout)
@@ -876,62 +465,6 @@ func approvedReviewsCount(ghPath string, repoRoot string, owner string, name str
 	return count, nil
 }
 
-func fetchRequiredApprovalsByBaseRefs(ghPath string, repoRoot string, owner string, name string, prs []ghPR) map[string]requiredApprovalsInfo {
-	out := make(map[string]requiredApprovalsInfo)
-	seen := make(map[string]bool)
-	baseRefs := make([]string, 0, len(prs))
-	for _, pr := range prs {
-		base := strings.TrimSpace(pr.BaseRefName)
-		if base == "" || seen[base] {
-			continue
-		}
-		seen[base] = true
-		baseRefs = append(baseRefs, base)
-	}
-	type baseResult struct {
-		base  string
-		count int
-		known bool
-	}
-	results := make(chan baseResult, len(baseRefs))
-	sem := make(chan struct{}, maxPREnrichmentParallel)
-	var wg sync.WaitGroup
-	for _, base := range baseRefs {
-		wg.Add(1)
-		go func(baseRef string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-			count, known, err := requiredApprovalsForBaseBranch(ghPath, repoRoot, owner, name, baseRef)
-			if err != nil {
-				results <- baseResult{base: baseRef, count: 0, known: false}
-				return
-			}
-			results <- baseResult{base: baseRef, count: count, known: known}
-		}(base)
-	}
-	go func() {
-		wg.Wait()
-		close(results)
-	}()
-	for res := range results {
-		out[res.base] = requiredApprovalsInfo{count: res.count, known: res.known}
-	}
-	return out
-}
-
-func parseGitHubTime(value string) time.Time {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return time.Time{}
-	}
-	t, err := time.Parse(time.RFC3339, value)
-	if err != nil {
-		return time.Time{}
-	}
-	return t
-}
-
 func normalizePRStatus(state string, mergedAt string, isDraft bool) string {
 	if strings.TrimSpace(mergedAt) != "" {
 		return "merged"
@@ -950,15 +483,6 @@ func normalizePRStatus(state string, mergedAt string, isDraft bool) string {
 		return "open"
 	default:
 		return "-"
-	}
-}
-
-func prStatusSortBucket(status string) int {
-	switch strings.TrimSpace(strings.ToLower(status)) {
-	case "merged", "closed":
-		return 1
-	default:
-		return 0
 	}
 }
 
