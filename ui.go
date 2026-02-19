@@ -294,6 +294,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case createWorktreeDoneMsg:
 		m.mode = modeList
 		m.creatingBranch = ""
+		m.creatingBaseRef = ""
+		m.creatingExisting = false
+		m.creatingStartedAt = time.Time{}
 		m.actionCreate = false
 		if msg.err != nil {
 			m.errMsg = msg.err.Error()
@@ -819,8 +822,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.errMsg = "Branch name required."
 					return m, nil
 				}
+				if !m.actionCreate {
+					row, ok := selectedWorktree(m.status, m.listIndex)
+					if !ok {
+						m.errMsg = "No worktree selected."
+						return m, nil
+					}
+					lock, err := m.mgr.AcquireWorktreeLock(row.Path)
+					if err != nil {
+						m.errMsg = err.Error()
+						return m, nil
+					}
+					if err := m.mgr.CheckoutNewBranch(row.Path, branch, m.status.BaseRef); err != nil {
+						lock.Release()
+						m.errMsg = err.Error()
+						return m, nil
+					}
+					m.errMsg = ""
+					m.warnMsg = ""
+					m.pendingPath = row.Path
+					m.pendingBranch = branch
+					m.pendingOpenShell = false
+					m.pendingLock = lock
+					return m, tea.Quit
+				}
 				m.mode = modeCreating
 				m.creatingBranch = branch
+				m.creatingBaseRef = m.status.BaseRef
+				m.creatingExisting = false
+				m.creatingStartedAt = time.Now()
 				m.newBranchInput.Blur()
 				m.newBranchInput.SetValue("")
 				m.errMsg = ""
@@ -976,6 +1006,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 					m.mode = modeCreating
 					m.creatingBranch = branch
+					m.creatingBaseRef = ""
+					m.creatingExisting = true
+					m.creatingStartedAt = time.Now()
 					m.branchInput.Blur()
 					m.branchSuggestions = nil
 					m.branchIndex = 0
@@ -1276,9 +1309,9 @@ func (m model) View() string {
 	if m.mode == modeCreating {
 		b.WriteString("\n")
 		b.WriteString(m.spinner.View())
-		b.WriteString(" Creating ")
-		b.WriteString(branchStyle.Render(m.creatingBranch))
-		b.WriteString("...\n")
+		b.WriteString(" ")
+		b.WriteString(renderCreateProgress(m))
+		b.WriteString("\n")
 	}
 	if m.warnMsg != "" {
 		b.WriteString(warnStyle.Render(m.warnMsg))
