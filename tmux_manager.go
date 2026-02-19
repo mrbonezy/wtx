@@ -190,7 +190,7 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	cmd := "#(" + shellQuote(bin) + " tmux-status --worktree " + shellQuote(worktreePath) + ")"
 	configureTmuxStatus(sessionID, "300", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
-	tmuxSetOption(sessionID, "status-right", " ^S shell | ^A ide ")
+	tmuxSetOption(sessionID, "status-right", " ^S shell | ^A ide | ^P pr ")
 	tmuxSetOption(sessionID, "status-right-length", "30")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
@@ -247,6 +247,7 @@ func ensureWTXSessionDefaults() {
 
 	// Bind ctrl+s to split and open shell in current pane's directory
 	// Bind ctrl+a to prompt for optional subpath and open IDE
+	// Bind ctrl+p to open PR for current branch in browser
 	wtxBin := resolveAgentLifecycleBinary()
 	if strings.TrimSpace(wtxBin) != "" {
 		// Use split-window directly for shell (faster, no need to resolve path)
@@ -254,6 +255,8 @@ func ensureWTXSessionDefaults() {
 		// For IDE, use command-prompt to ask for optional subpath
 		ideCmd := fmt.Sprintf("run-shell -b '%s ide #{pane_current_path}/%%1'", strings.ReplaceAll(wtxBin, "'", "'\\''"))
 		_ = exec.Command("tmux", "bind-key", "-n", "C-a", "command-prompt", "-p", "subpath (optional):", ideCmd).Run()
+		// For PR, use gh pr view --web directly
+		_ = exec.Command("tmux", "bind-key", "-n", "C-p", "run-shell", "-b", "cd #{pane_current_path} && gh pr view --web").Run()
 	}
 }
 
