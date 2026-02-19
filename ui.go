@@ -313,7 +313,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeList {
 			return m, tea.Batch(fetchStatusCmd(m.orchestrator), pollStatusTickCmd())
 		}
-		if m.mode == modeOpen && !m.openCreating && m.openStage == openStageMain && !m.openEnteringNew && !m.openShowDebug {
+		if m.mode == modeOpen && !m.openCreating && m.openStage == openStageMain && !m.openEnteringNew && !m.openShowDebug && strings.TrimSpace(m.openTypeahead) == "" {
 			return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), pollStatusTickCmd())
 		}
 		return m, pollStatusTickCmd()
