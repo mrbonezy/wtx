@@ -165,11 +165,22 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openSelected = clampOpenSelection(m.openSelected, len(m.openBranches))
 		m.openFetchID = msg.fetchID
 		m.openLoading = true
+		var paths []string
+		for _, slot := range msg.slots {
+			if slot.Path != "" {
+				paths = append(paths, slot.Path)
+			}
+		}
+		cmds := []tea.Cmd{m.ghSpinner.Tick}
+		if len(paths) > 0 {
+			cmds = append(cmds, fetchDirtyStatusCmd(paths))
+		}
 		if len(m.openPRBranches) == 0 {
 			m.openLoading = false
-			return m, nil
+			return m, tea.Batch(cmds...)
 		}
-		return m, tea.Batch(fetchOpenPRDataCmd(m.orchestrator, m.status.RepoRoot, m.openPRBranches, msg.fetchID), m.ghSpinner.Tick)
+		cmds = append(cmds, fetchOpenPRDataCmd(m.orchestrator, m.status.RepoRoot, m.openPRBranches, msg.fetchID))
+		return m, tea.Batch(cmds...)
 	case openScreenPRDataMsg:
 		if strings.TrimSpace(msg.fetchID) == "" || msg.fetchID != m.openFetchID {
 			return m, nil
@@ -181,6 +192,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.openLoadErr = ""
 		applyPRDataToOpenState(&m.openBranches, &m.openLockedBranches, &m.openSlots, msg.byBranch)
+		return m, nil
+	case openScreenDirtyMsg:
+		for i := range m.openSlots {
+			if dirty, ok := msg.dirtyByPath[m.openSlots[i].Path]; ok {
+				m.openSlots[i].Dirty = dirty
+			}
+		}
 		return m, nil
 	case openDeleteWorktreeDoneMsg:
 		if msg.err != nil {

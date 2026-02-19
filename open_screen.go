@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -47,6 +48,10 @@ type openScreenPRDataMsg struct {
 	err      error
 }
 
+type openScreenDirtyMsg struct {
+	dirtyByPath map[string]bool
+}
+
 func loadOpenScreenCmd(orchestrator *WorktreeOrchestrator, mgr *WorktreeManager) tea.Cmd {
 	return func() tea.Msg {
 		if orchestrator == nil || mgr == nil {
@@ -61,32 +66,25 @@ func loadOpenScreenCmd(orchestrator *WorktreeOrchestrator, mgr *WorktreeManager)
 			return openScreenLoadedMsg{status: status, err: err}
 		}
 
-		slots := make([]openSlotState, 0, len(status.Worktrees))
+		slots := make([]openSlotState, len(status.Worktrees))
 		lockedBranches := make(map[string]bool, len(status.Worktrees))
 		seenPR := make(map[string]bool, len(branches)+len(status.Worktrees))
 		prBranches := make([]string, 0, len(branches)+len(status.Worktrees))
 
-		for _, wt := range status.Worktrees {
-			dirty, derr := worktreeDirty(wt.Path)
-			if derr != nil {
-				return openScreenLoadedMsg{status: status, err: derr}
-			}
-			locked, lerr := worktreeLockedByAny(orchestrator, status.RepoRoot, wt.Path)
-			if lerr != nil {
-				return openScreenLoadedMsg{status: status, err: lerr}
-			}
-			slot := openSlotState{
+		for i, wt := range status.Worktrees {
+			slots[i] = openSlotState{
 				Path:      wt.Path,
 				Branch:    wt.Branch,
-				Locked:    locked || !wt.Available,
-				Dirty:     dirty,
+				Locked:    !wt.Available,
 				PRLoading: true,
 			}
-			slots = append(slots, slot)
-			if slot.Locked {
-				lockedBranches[strings.TrimSpace(slot.Branch)] = true
+			if locked, err := worktreeLockedByAny(orchestrator, status.RepoRoot, wt.Path); err == nil && locked {
+				slots[i].Locked = true
 			}
-			name := strings.TrimSpace(slot.Branch)
+			if slots[i].Locked {
+				lockedBranches[strings.TrimSpace(slots[i].Branch)] = true
+			}
+			name := strings.TrimSpace(slots[i].Branch)
 			if name != "" && name != "detached" && !seenPR[name] {
 				seenPR[name] = true
 				prBranches = append(prBranches, name)
@@ -148,6 +146,28 @@ func loadOpenScreenCmd(orchestrator *WorktreeOrchestrator, mgr *WorktreeManager)
 			prBranches:     prBranches,
 			fetchID:        fmt.Sprintf("%d", time.Now().UnixNano()),
 		}
+	}
+}
+
+func fetchDirtyStatusCmd(paths []string) tea.Cmd {
+	return func() tea.Msg {
+		result := make(map[string]bool, len(paths))
+		var mu sync.Mutex
+		var wg sync.WaitGroup
+		for _, p := range paths {
+			wg.Add(1)
+			go func(path string) {
+				defer wg.Done()
+				dirty, err := worktreeDirty(path)
+				if err == nil {
+					mu.Lock()
+					result[path] = dirty
+					mu.Unlock()
+				}
+			}(p)
+		}
+		wg.Wait()
+		return openScreenDirtyMsg{dirtyByPath: result}
 	}
 }
 
@@ -525,19 +545,13 @@ func openFilteredIndices(query string, branches []openBranchOption) []int {
 	qNum := strings.TrimPrefix(q, "#")
 	for i, branch := range branches {
 		name := strings.ToLower(strings.TrimSpace(branch.Name))
-		if strings.Contains(name, q) {
-			out = append(out, i)
+		nameMatch := strings.Contains(name, q)
+		prMatch := false
+		if branch.HasPR && branch.PRNumber > 0 {
+			num := fmt.Sprintf("%d", branch.PRNumber)
+			prMatch = strings.HasPrefix(num, qNum) || strings.Contains("#"+num, q)
 		}
-	}
-	if len(out) > 0 {
-		return out
-	}
-	for i, branch := range branches {
-		if !branch.HasPR || branch.PRNumber <= 0 {
-			continue
-		}
-		num := fmt.Sprintf("%d", branch.PRNumber)
-		if strings.HasPrefix(num, qNum) || strings.Contains("#"+num, q) {
+		if nameMatch || prMatch {
 			out = append(out, i)
 		}
 	}
