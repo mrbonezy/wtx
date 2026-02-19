@@ -270,6 +270,94 @@ func renderOpenScreen(m model) string {
 		b.WriteString("Ctrl+R refreshes. Esc/Ctrl+D back. q quits.\n")
 		return b.String()
 	}
+	if m.openStage == openStageNewBranchConfig {
+		b.WriteString("Branch:\n")
+		b.WriteString("  " + secondaryStyle.Render(m.openTargetBranch) + "\n")
+		b.WriteString("From:\n")
+		b.WriteString("  " + inputStyle.Render(m.openBaseRefInput.View()) + "\n")
+		checked := "x"
+		if !m.openTargetFetch {
+			checked = " "
+		}
+		b.WriteString(fmt.Sprintf("  [%s] git fetch first (space toggles)\n", checked))
+		if m.openAskBaseDefault {
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render("Use this 'from' value as default? (y/N)"))
+			b.WriteString("\n")
+		}
+		if m.openAskFetchDefault {
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render("Use this fetch preference as default? (y/N)"))
+			b.WriteString("\n")
+		}
+		if m.openLoadErr != "" {
+			b.WriteString("\n")
+			b.WriteString(errorStyle.Render("Error: " + m.openLoadErr))
+			b.WriteString("\n")
+		}
+		if m.errMsg != "" {
+			b.WriteString("\n")
+			b.WriteString(errorStyle.Render(m.errMsg))
+			b.WriteString("\n")
+		}
+		b.WriteString("\n")
+		if m.openLoading {
+			b.WriteString("Loading in progress. Enter is disabled. Space toggles fetch. Esc cancels. Ctrl+R refreshes.\n")
+		} else {
+			b.WriteString("Type From value. Space toggles fetch. Enter continues. Esc cancels. Ctrl+R refreshes.\n")
+		}
+		return b.String()
+	}
+	if m.openStage == openStagePickWorktree {
+		b.WriteString("No clean available worktree. Choose target:\n")
+		createLine := "  + Create new worktree"
+		if m.openPickIndex == 0 {
+			createLine = "> + Create new worktree"
+			b.WriteString(selectorSelectedStyle.Render(createLine) + "\n")
+		} else {
+			b.WriteString(actionNormalStyle.Render(createLine) + "\n")
+		}
+		for i, slot := range m.openSlots {
+			rowIndex := i + 1
+			cursor := "  "
+			render := actionNormalStyle.Render
+			if rowIndex == m.openPickIndex {
+				cursor = "> "
+				render = selectorSelectedStyle.Render
+			}
+			state := debugWorktreeState(slot)
+			line := fmt.Sprintf("%s%-12s %-24s %s", cursor, state, slot.Branch, slot.Path)
+			b.WriteString(render(line) + "\n")
+		}
+		if m.openPickConfirm {
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render("Selected worktree is locked. Force unlock and use? (y/N)"))
+			b.WriteString("\n")
+			if strings.TrimSpace(m.openPickConfirmBranch) != "" {
+				b.WriteString(secondaryStyle.Render("  "+m.openPickConfirmBranch) + "\n")
+			}
+			if strings.TrimSpace(m.openPickConfirmPath) != "" {
+				b.WriteString(secondaryStyle.Render("  "+m.openPickConfirmPath) + "\n")
+			}
+		}
+		if m.openLoadErr != "" {
+			b.WriteString("\n")
+			b.WriteString(errorStyle.Render("Error: " + m.openLoadErr))
+			b.WriteString("\n")
+		}
+		if m.errMsg != "" {
+			b.WriteString("\n")
+			b.WriteString(errorStyle.Render(m.errMsg))
+			b.WriteString("\n")
+		}
+		if m.warnMsg != "" {
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render(m.warnMsg))
+			b.WriteString("\n")
+		}
+		b.WriteString("\nUse up/down to choose, enter to select. Esc goes back. Ctrl+R refreshes (auto-refresh every 2s).\n")
+		return b.String()
+	}
 	if m.openEnteringNew {
 		b.WriteString("New branch name:\n")
 		b.WriteString("  " + inputStyle.Render(m.newBranchInput.View()) + "\n")
@@ -285,9 +373,9 @@ func renderOpenScreen(m model) string {
 		}
 		b.WriteString("\n")
 		if m.openLoading {
-			b.WriteString("Type branch name. Enter is disabled until startup loading finishes. Esc cancels. Ctrl+R refreshes. Ctrl+D debug.\n")
+			b.WriteString("Type branch name. Enter continues to setup (loading-safe). Esc cancels. Ctrl+R refreshes. Ctrl+D debug.\n")
 		} else {
-			b.WriteString("Type branch name, enter to continue (not implemented yet), esc to cancel, Ctrl+R to refresh. Ctrl+D debug.\n")
+			b.WriteString("Type branch name, enter to continue to setup, esc to cancel, Ctrl+R to refresh. Ctrl+D debug.\n")
 		}
 		return b.String()
 	}
@@ -372,6 +460,48 @@ func debugWorktreeState(slot openSlotState) string {
 		return "unclean"
 	}
 	return "clean"
+}
+
+func findReusableOpenSlot(slots []openSlotState, branch string) (openSlotState, bool) {
+	want := strings.TrimSpace(branch)
+	for _, slot := range slots {
+		if strings.TrimSpace(slot.Branch) != want {
+			continue
+		}
+		if slot.Locked || slot.Dirty {
+			continue
+		}
+		return slot, true
+	}
+	return openSlotState{}, false
+}
+
+func findAnyAvailableOpenSlot(slots []openSlotState) (openSlotState, bool) {
+	for _, slot := range slots {
+		if slot.Locked || slot.Dirty {
+			continue
+		}
+		return slot, true
+	}
+	return openSlotState{}, false
+}
+
+func openPickRowCount(slots []openSlotState) int {
+	return len(slots) + 1
+}
+
+func clampOpenPickIndex(index int, slots []openSlotState) int {
+	maxIndex := openPickRowCount(slots) - 1
+	if maxIndex < 0 {
+		return 0
+	}
+	if index < 0 {
+		return 0
+	}
+	if index > maxIndex {
+		return maxIndex
+	}
+	return index
 }
 
 func openTypeaheadMatchIndex(query string, branches []openBranchOption) (int, bool) {

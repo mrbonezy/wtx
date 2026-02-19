@@ -9,7 +9,9 @@ import (
 )
 
 type Config struct {
-	AgentCommand string `json:"agent_command"`
+	AgentCommand        string `json:"agent_command"`
+	NewBranchBaseRef    string `json:"new_branch_base_ref,omitempty"`
+	NewBranchFetchFirst *bool  `json:"new_branch_fetch_first,omitempty"`
 }
 
 const defaultAgentCommand = "claude"
@@ -31,6 +33,7 @@ func LoadConfig() (Config, error) {
 	if cfg.AgentCommand == "" {
 		cfg.AgentCommand = defaultAgentCommand
 	}
+	cfg.NewBranchBaseRef = strings.TrimSpace(cfg.NewBranchBaseRef)
 	return cfg, nil
 }
 
