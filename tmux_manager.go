@@ -190,8 +190,8 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	cmd := "#(" + shellQuote(bin) + " tmux-status --worktree " + shellQuote(worktreePath) + ")"
 	configureTmuxStatus(sessionID, "300", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
-	tmuxSetOption(sessionID, "status-right", " ⌥← → panes | ^S shell | ^A ide | ^P pr ")
-	tmuxSetOption(sessionID, "status-right-length", "50")
+	tmuxSetOption(sessionID, "status-right", " ⌥← → panes | ^⇧↑↓ resize | ^S shell | ^A ide | ^P pr ")
+	tmuxSetOption(sessionID, "status-right-length", "64")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
 	tmuxSetOption(sessionID, "set-titles-string", titleCmd)
@@ -242,6 +242,9 @@ func ensureWTXSessionDefaults() {
 	_ = exec.Command("tmux", "bind-key", "-n", "M-Down", "select-pane", "-D").Run()
 	_ = exec.Command("tmux", "bind-key", "-n", "M-Left", "select-pane", "-L").Run()
 	_ = exec.Command("tmux", "bind-key", "-n", "M-Right", "select-pane", "-R").Run()
+	// Bind Ctrl+Shift+Up/Down for quick vertical pane resizing (avoids common macOS Ctrl+Arrow shortcuts).
+	_ = exec.Command("tmux", "bind-key", "-r", "-n", "C-S-Up", "resize-pane", "-U", "3").Run()
+	_ = exec.Command("tmux", "bind-key", "-r", "-n", "C-S-Down", "resize-pane", "-D", "3").Run()
 	// Preserve modified key chords (for example Shift+Enter in coding agents) inside wtx-managed tmux sessions.
 	tmuxSetWindowOption(sessionID, "xterm-keys", "on")
 	tmuxSetGlobalWindowOption("xterm-keys", "on")
