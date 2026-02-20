@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -13,6 +14,7 @@ type configField int
 const (
 	fieldAgent configField = iota
 	fieldDefaultBranch
+	fieldMainScreenBranchCount
 	fieldDefaultFetch
 	fieldIDECommand
 	fieldCount
@@ -54,6 +56,13 @@ func newConfigModel() configModel {
 	branchInput.CharLimit = 200
 	branchInput.Width = 40
 	inputs[fieldDefaultBranch] = branchInput
+
+	branchLimitInput := textinput.New()
+	branchLimitInput.Placeholder = strconv.Itoa(defaultMainScreenBranchLimit)
+	branchLimitInput.SetValue(strconv.Itoa(cfg.MainScreenBranchLimit))
+	branchLimitInput.CharLimit = 4
+	branchLimitInput.Width = 10
+	inputs[fieldMainScreenBranchCount] = branchLimitInput
 
 	fetchInput := textinput.New()
 	inputs[fieldDefaultFetch] = fetchInput
@@ -142,6 +151,10 @@ func (m configModel) save() error {
 	}
 
 	branch := strings.TrimSpace(m.inputs[fieldDefaultBranch].Value())
+	branchLimit, err := normalizeMainScreenBranchLimit(m.inputs[fieldMainScreenBranchCount].Value())
+	if err != nil {
+		return err
+	}
 
 	ide := strings.TrimSpace(m.inputs[fieldIDECommand].Value())
 	if ide == "" {
@@ -149,10 +162,11 @@ func (m configModel) save() error {
 	}
 
 	cfg := Config{
-		AgentCommand:        agent,
-		NewBranchBaseRef:    branch,
-		NewBranchFetchFirst: &m.fetchToggle,
-		IDECommand:          ide,
+		AgentCommand:          agent,
+		NewBranchBaseRef:      branch,
+		NewBranchFetchFirst:   &m.fetchToggle,
+		IDECommand:            ide,
+		MainScreenBranchLimit: branchLimit,
 	}
 	return SaveConfig(cfg)
 }
@@ -167,6 +181,7 @@ func (m configModel) View() string {
 
 	b.WriteString(m.renderField(fieldAgent, "Agent command:", m.inputs[fieldAgent].View()))
 	b.WriteString(m.renderField(fieldDefaultBranch, "Default branch:", m.inputs[fieldDefaultBranch].View()))
+	b.WriteString(m.renderField(fieldMainScreenBranchCount, "Main screen branch count:", m.inputs[fieldMainScreenBranchCount].View()))
 	b.WriteString(m.renderFetchField())
 	b.WriteString(m.renderField(fieldIDECommand, "IDE command:", m.inputs[fieldIDECommand].View()))
 

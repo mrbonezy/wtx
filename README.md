@@ -29,6 +29,12 @@ wtx init
 wtx
 ```
 
+Configure defaults:
+
+```sh
+wtx config
+```
+
 Inside the picker:
 - `enter`: actions for selected free worktree
 - `s`: open shell in selected free worktree
@@ -50,6 +56,7 @@ Inside the picker:
 - Force-unlock flow for in-use worktrees (`u`)
 - Orphaned worktree detection and disabled selection
 - Branch list filtering + recently-used ordering
+- Configurable main-screen branch list size (`wtx config`, default `10`)
 - Live local status polling in the root menu (`1s`)
 - GitHub integration (if `gh` is installed):
   - PR link

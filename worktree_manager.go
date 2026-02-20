@@ -17,8 +17,6 @@ type WorktreeManager struct {
 	byRepo  map[string]repoBaseRefState
 }
 
-const maxRecentBranches = 15
-
 type repoBaseRefState struct {
 	Remote  string
 	BaseRef string
@@ -156,17 +154,21 @@ func (m *WorktreeManager) ListLocalBranchesByRecentUse() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	limit := defaultMainScreenBranchLimit
+	if cfg, cfgErr := LoadConfig(); cfgErr == nil && cfg.MainScreenBranchLimit > 0 {
+		limit = cfg.MainScreenBranchLimit
+	}
 
 	output, err := commandOutputInDir(repoRoot, gitPath, "for-each-ref",
 		"--sort=-committerdate",
 		"--format=%(refname:short)",
 		"refs/heads/",
-		"--count", fmt.Sprintf("%d", maxRecentBranches))
+		"--count", fmt.Sprintf("%d", limit))
 	if err != nil {
 		return nil, err
 	}
 
-	branches := make([]string, 0, maxRecentBranches)
+	branches := make([]string, 0, limit)
 	for _, line := range strings.Split(string(output), "\n") {
 		name := strings.TrimSpace(line)
 		if name == "" {

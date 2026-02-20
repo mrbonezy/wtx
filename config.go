@@ -5,18 +5,21 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
 type Config struct {
-	AgentCommand        string `json:"agent_command"`
-	NewBranchBaseRef    string `json:"new_branch_base_ref,omitempty"`
-	NewBranchFetchFirst *bool  `json:"new_branch_fetch_first,omitempty"`
-	IDECommand          string `json:"ide_command,omitempty"`
+	AgentCommand          string `json:"agent_command"`
+	NewBranchBaseRef      string `json:"new_branch_base_ref,omitempty"`
+	NewBranchFetchFirst   *bool  `json:"new_branch_fetch_first,omitempty"`
+	IDECommand            string `json:"ide_command,omitempty"`
+	MainScreenBranchLimit int    `json:"main_screen_branch_limit,omitempty"`
 }
 
 const defaultAgentCommand = "claude"
 const defaultIDECommand = "code"
+const defaultMainScreenBranchLimit = 10
 
 func LoadConfig() (Config, error) {
 	path, err := configPath()
@@ -36,7 +39,22 @@ func LoadConfig() (Config, error) {
 		cfg.AgentCommand = defaultAgentCommand
 	}
 	cfg.NewBranchBaseRef = strings.TrimSpace(cfg.NewBranchBaseRef)
+	if cfg.MainScreenBranchLimit <= 0 {
+		cfg.MainScreenBranchLimit = defaultMainScreenBranchLimit
+	}
 	return cfg, nil
+}
+
+func normalizeMainScreenBranchLimit(input string) (int, error) {
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return defaultMainScreenBranchLimit, nil
+	}
+	limit, err := strconv.Atoi(input)
+	if err != nil || limit <= 0 {
+		return 0, errors.New("main screen branch count must be a positive number")
+	}
+	return limit, nil
 }
 
 func ConfigExists() (bool, error) {
