@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/huh"
 	"github.com/charmbracelet/lipgloss"
 	uiview "github.com/mrbonezy/wtx/ui"
 	"github.com/muesli/termenv"
@@ -69,25 +70,22 @@ type model struct {
 	openShowDebug         bool
 	openDebugIndex        int
 	openDebugCreating     bool
-	openConfirmAction     string
-	openConfirmPath       string
-	openConfirmBranch     string
 	openStage             openStage
 	openTargetBranch      string
 	openTargetIsNew       bool
 	openTargetBaseRef     string
 	openTargetFetch       bool
 	openPickIndex         int
-	openPickConfirm       bool
 	openPickConfirmPath   string
 	openPickConfirmBranch string
 	openDefaultBaseRef    string
 	openDefaultFetch      bool
 	openBaseRefInput      textinput.Model
-	openAskBaseDefault      bool
-	openAskFetchDefault     bool
-	openCreating            bool
-	openCreatingStartedAt   time.Time
+	confirmForm           *huh.Form
+	confirmResult         bool
+	confirmKind           confirmKind
+	openCreating          bool
+	openCreatingStartedAt time.Time
 }
 
 func (m model) PendingWorktree() (string, string, bool, *WorktreeLock) {
@@ -129,6 +127,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	defer func() {
 		syncTabTitleWithSelection(m)
 	}()
+	if m.confirmForm != nil {
+		form, cmd := m.confirmForm.Update(msg)
+		if f, ok := form.(*huh.Form); ok {
+			m.confirmForm = f
+		}
+		if m.confirmForm.State == huh.StateCompleted || m.confirmForm.State == huh.StateAborted {
+			m.confirmResult = m.confirmForm.State == huh.StateCompleted && m.confirmForm.GetBool(confirmFieldKey)
+			return m.handleConfirmDone()
+		}
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case openScreenLoadedMsg:
 		m.ready = true
@@ -151,9 +160,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openTypeahead = ""
 		m.openDebugIndex = clampOpenDebugIndex(m.openDebugIndex, len(msg.slots))
 		m.openDebugCreating = false
-		m.openConfirmAction = ""
-		m.openConfirmPath = ""
-		m.openConfirmBranch = ""
 		if strings.TrimSpace(m.openDefaultBaseRef) == "" {
 			m.openDefaultBaseRef = strings.TrimSpace(msg.status.BaseRef)
 			if m.openDefaultBaseRef == "" {
@@ -386,29 +392,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.openShowDebug {
-				if m.openConfirmAction != "" {
-					switch msg.String() {
-					case "y", "Y":
-						action := m.openConfirmAction
-						path := m.openConfirmPath
-						m.openConfirmAction = ""
-						m.openConfirmPath = ""
-						m.openConfirmBranch = ""
-						if action == "delete" {
-							return m, deleteOpenWorktreeCmd(m.mgr, path)
-						}
-						if action == "unlock" {
-							return m, unlockOpenWorktreeCmd(m.mgr, path)
-						}
-						return m, nil
-					case "n", "N", "esc":
-						m.openConfirmAction = ""
-						m.openConfirmPath = ""
-						m.openConfirmBranch = ""
-						return m, nil
-					}
-					return m, nil
-				}
 				if m.openDebugCreating {
 					switch msg.String() {
 					case "enter":
@@ -454,11 +437,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.errMsg = "Cannot remove an unclean worktree."
 						return m, nil
 					}
-					m.openConfirmAction = "delete"
-					m.openConfirmPath = slot.Path
-					m.openConfirmBranch = slot.Branch
+					m.openPickConfirmPath = slot.Path
+					m.openPickConfirmBranch = slot.Branch
+					m.confirmResult = false
+					m.confirmKind = confirmOpenDebugDelete
+					m.confirmForm = newConfirmForm(
+						"Delete selected worktree?",
+						fmt.Sprintf("%s\n%s", slot.Branch, slot.Path),
+						&m.confirmResult,
+					)
 					m.errMsg = ""
-					return m, nil
+					return m, m.confirmForm.Init()
 				case "u":
 					slot, ok := selectedOpenDebugSlot(m.openSlots, m.openDebugIndex)
 					if !ok {
@@ -469,11 +458,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.errMsg = "Worktree is not in use."
 						return m, nil
 					}
-					m.openConfirmAction = "unlock"
-					m.openConfirmPath = slot.Path
-					m.openConfirmBranch = slot.Branch
+					m.openPickConfirmPath = slot.Path
+					m.openPickConfirmBranch = slot.Branch
+					m.confirmResult = false
+					m.confirmKind = confirmOpenDebugUnlock
+					m.confirmForm = newConfirmForm(
+						"Force unlock selected worktree?",
+						fmt.Sprintf("%s\n%s", slot.Branch, slot.Path),
+						&m.confirmResult,
+					)
 					m.errMsg = ""
-					return m, nil
+					return m, m.confirmForm.Init()
 				case "n":
 					m.openDebugCreating = true
 					m.newBranchInput.SetValue("")
@@ -489,56 +484,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			if m.openStage == openStageNewBranchConfig {
-				if m.openAskBaseDefault || m.openAskFetchDefault {
-					var saveCmd tea.Cmd
-					switch msg.String() {
-					case "y", "Y":
-						if m.openAskBaseDefault {
-							m.openDefaultBaseRef = strings.TrimSpace(m.openTargetBaseRef)
-							m.openAskBaseDefault = false
-							saveCmd = saveOpenDefaultsCmd(m.openDefaultBaseRef, m.openDefaultFetch)
-							if m.openTargetFetch != m.openDefaultFetch {
-								m.openAskFetchDefault = true
-								return m, saveCmd
-							}
-							// Continue to selection execution below.
-						} else if m.openAskFetchDefault {
-							m.openDefaultFetch = m.openTargetFetch
-							m.openAskFetchDefault = false
-							saveCmd = saveOpenDefaultsCmd(m.openDefaultBaseRef, m.openDefaultFetch)
-						}
-					case "n", "N", "esc":
-						if m.openAskBaseDefault {
-							m.openAskBaseDefault = false
-							if m.openTargetFetch != m.openDefaultFetch {
-								m.openAskFetchDefault = true
-								return m, nil
-							}
-						} else if m.openAskFetchDefault {
-							m.openAskFetchDefault = false
-						}
-					default:
-						return m, nil
-					}
-					if m.openAskBaseDefault || m.openAskFetchDefault {
-						return m, nil
-					}
-					// If both prompts are resolved, continue with selection attempt.
-					if reusable, ok := findReusableOpenSlot(m.openSlots, m.openTargetBranch); ok {
-						m.openCreating = true
-						m.openCreatingStartedAt = time.Now()
-						return m, tea.Batch(saveCmd, m.spinner.Tick, useExistingWorktreeCmd(m.mgr, reusable.Path, m.openTargetBranch))
-					}
-					if available, ok := findAnyAvailableOpenSlot(m.openSlots); ok {
-						m.openCreating = true
-						m.openCreatingStartedAt = time.Now()
-						return m, tea.Batch(saveCmd, m.spinner.Tick, checkoutNewInWorktreeCmd(m.mgr, available.Path, m.openTargetBranch, m.openTargetBaseRef, m.openTargetFetch))
-					}
-					m.openStage = openStagePickWorktree
-					m.openPickIndex = 0
-					m.openPickConfirm = false
-					return m, tea.Batch(saveCmd, loadOpenScreenCmd(m.orchestrator, m.mgr), openPickRefreshTickCmd(), m.ghSpinner.Tick)
-				}
 				switch msg.String() {
 				case "ctrl+r":
 					m.openLoading = true
@@ -570,68 +515,32 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.openTargetIsNew = true
 					m.openTargetBaseRef = base
 					if m.openTargetBaseRef != m.openDefaultBaseRef {
-						m.openAskBaseDefault = true
-						return m, nil
+						m.confirmResult = false
+						m.confirmKind = confirmOpenBaseDefault
+						m.confirmForm = newConfirmForm(
+							"Save this base ref as default?",
+							fmt.Sprintf("%s\n%s", m.openTargetBranch, m.openTargetBaseRef),
+							&m.confirmResult,
+						)
+						return m, m.confirmForm.Init()
 					}
 					if m.openTargetFetch != m.openDefaultFetch {
-						m.openAskFetchDefault = true
-						return m, nil
+						m.confirmResult = false
+						m.confirmKind = confirmOpenFetchDefault
+						m.confirmForm = newConfirmForm(
+							"Save this fetch preference as default?",
+							fmt.Sprintf("%s\ngit fetch first: %t", m.openTargetBranch, m.openTargetFetch),
+							&m.confirmResult,
+						)
+						return m, m.confirmForm.Init()
 					}
-					if reusable, ok := findReusableOpenSlot(m.openSlots, m.openTargetBranch); ok {
-						m.openCreating = true
-						m.openCreatingStartedAt = time.Now()
-						return m, tea.Batch(m.spinner.Tick, useExistingWorktreeCmd(m.mgr, reusable.Path, m.openTargetBranch))
-					}
-					if available, ok := findAnyAvailableOpenSlot(m.openSlots); ok {
-						m.openCreating = true
-						m.openCreatingStartedAt = time.Now()
-						return m, tea.Batch(m.spinner.Tick, checkoutNewInWorktreeCmd(m.mgr, available.Path, m.openTargetBranch, m.openTargetBaseRef, m.openTargetFetch))
-					}
-					m.openStage = openStagePickWorktree
-					m.openPickIndex = 0
-					m.openPickConfirm = false
-					return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), openPickRefreshTickCmd(), m.ghSpinner.Tick)
+					return m.continueOpenTargetSelection(nil)
 				}
 				var cmd tea.Cmd
 				m.openBaseRefInput, cmd = m.openBaseRefInput.Update(msg)
 				return m, cmd
 			}
 			if m.openStage == openStagePickWorktree {
-				if m.openPickConfirm {
-					switch msg.String() {
-					case "y", "Y":
-						path := m.openPickConfirmPath
-						m.openPickConfirm = false
-						m.openPickConfirmPath = ""
-						m.openPickConfirmBranch = ""
-						if err := m.mgr.UnlockWorktree(path); err != nil {
-							m.errMsg = err.Error()
-							return m, nil
-						}
-						if slot, ok := findOpenSlotByPath(m.openSlots, path); ok && slot.Dirty {
-							m.warnMsg = "Worktree is unclean. Clean it first."
-							m.pendingPath = slot.Path
-							m.pendingBranch = slot.Branch
-							m.pendingOpenShell = true
-							m.pendingLock = nil
-							return m, tea.Quit
-						}
-						if slot, ok := findOpenSlotByPath(m.openSlots, path); ok {
-							m.openCreating = true
-							m.openCreatingStartedAt = time.Now()
-							return m, tea.Batch(m.spinner.Tick, openCmdForTargetOnSlot(m, slot))
-						}
-						m.openLoading = true
-						return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), openPickRefreshTickCmd(), m.ghSpinner.Tick)
-					case "n", "N", "esc":
-						m.openPickConfirm = false
-						m.openPickConfirmPath = ""
-						m.openPickConfirmBranch = ""
-						return m, nil
-					default:
-						return m, nil
-					}
-				}
 				switch msg.String() {
 				case "ctrl+r":
 					m.openLoading = true
@@ -658,10 +567,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 					if slot.Locked {
-						m.openPickConfirm = true
 						m.openPickConfirmPath = slot.Path
 						m.openPickConfirmBranch = slot.Branch
-						return m, nil
+						m.confirmResult = false
+						m.confirmKind = confirmOpenPickLocked
+						m.confirmForm = newConfirmForm(
+							"Force unlock selected worktree?",
+							fmt.Sprintf("%s\n%s", slot.Branch, slot.Path),
+							&m.confirmResult,
+						)
+						return m, m.confirmForm.Init()
 					}
 					if slot.Dirty {
 						m.warnMsg = "Worktree is unclean. Clean it first."
@@ -746,21 +661,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openTargetIsNew = false
 				m.openTargetBaseRef = ""
 				m.openTargetFetch = false
-				if reusable, ok := findReusableOpenSlot(m.openSlots, branch); ok {
-					m.openCreating = true
-					m.openCreatingStartedAt = time.Now()
-					return m, tea.Batch(m.spinner.Tick, useExistingWorktreeCmd(m.mgr, reusable.Path, branch))
-				}
-				if available, ok := findAnyAvailableOpenSlot(m.openSlots); ok {
-					m.openCreating = true
-					m.openCreatingStartedAt = time.Now()
-					return m, tea.Batch(m.spinner.Tick, checkoutExistingInWorktreeCmd(m.mgr, available.Path, branch))
-				}
-				m.openStage = openStagePickWorktree
-				m.openPickIndex = 0
-				m.openPickConfirm = false
 				m.errMsg = ""
-				return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), openPickRefreshTickCmd(), m.ghSpinner.Tick)
+				return m.continueOpenTargetSelection(nil)
 			case "esc":
 				return m, nil
 			}
@@ -812,49 +714,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		if m.mode == modeDelete {
-			switch msg.String() {
-			case "y", "Y":
-				force := isOrphanedPath(m.status, m.deletePath)
-				if err := m.mgr.DeleteWorktree(m.deletePath, force); err != nil {
-					m.errMsg = err.Error()
-					m.mode = modeList
-					return m, nil
-				}
-				m.mode = modeList
-				m.deletePath = ""
-				m.deleteBranch = ""
-				m.errMsg = ""
-				return m, fetchStatusCmd(m.orchestrator)
-			case "n", "N", "esc":
-				m.mode = modeList
-				m.deletePath = ""
-				m.deleteBranch = ""
-				m.errMsg = ""
-				return m, nil
-			}
-			return m, nil
-		}
-		if m.mode == modeUnlock {
-			switch msg.String() {
-			case "y", "Y":
-				if err := m.mgr.UnlockWorktree(m.unlockPath); err != nil {
-					m.errMsg = err.Error()
-					m.mode = modeList
-					return m, nil
-				}
-				m.mode = modeList
-				m.unlockPath = ""
-				m.unlockBranch = ""
-				m.errMsg = ""
-				return m, fetchStatusCmd(m.orchestrator)
-			case "n", "N", "esc":
-				m.mode = modeList
-				m.unlockPath = ""
-				m.unlockBranch = ""
-				m.errMsg = ""
-				return m, nil
-			}
+		if m.mode == modeDelete || m.mode == modeUnlock {
 			return m, nil
 		}
 		if m.mode == modeBranchName {
@@ -1174,8 +1034,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeDelete
 				m.deletePath = row.Path
 				m.deleteBranch = row.Branch
+				m.confirmResult = false
+				m.confirmKind = confirmDelete
+				m.confirmForm = newConfirmForm(
+					"Delete worktree?",
+					fmt.Sprintf("%s\n%s", row.Branch, row.Path),
+					&m.confirmResult,
+				)
 				m.errMsg = ""
-				return m, nil
+				return m, m.confirmForm.Init()
 			}
 		case "p", "P":
 			if row, ok := selectedWorktree(m.status, m.listIndex); ok {
@@ -1203,12 +1070,158 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.mode = modeUnlock
 				m.unlockPath = row.Path
 				m.unlockBranch = row.Branch
+				m.confirmResult = false
+				m.confirmKind = confirmUnlock
+				m.confirmForm = newConfirmForm(
+					"Unlock worktree?",
+					fmt.Sprintf("%s\n%s", row.Branch, row.Path),
+					&m.confirmResult,
+				)
 				m.errMsg = ""
-				return m, nil
+				return m, m.confirmForm.Init()
 			}
 		}
 	}
 	return m, nil
+}
+
+func (m model) handleConfirmDone() (tea.Model, tea.Cmd) {
+	kind := m.confirmKind
+	confirmed := m.confirmResult
+	m.confirmForm = nil
+	m.confirmResult = false
+	m.confirmKind = confirmNone
+
+	switch kind {
+	case confirmDelete:
+		m.mode = modeList
+		path := m.deletePath
+		m.deletePath = ""
+		m.deleteBranch = ""
+		m.errMsg = ""
+		if !confirmed {
+			return m, nil
+		}
+		force := isOrphanedPath(m.status, path)
+		if err := m.mgr.DeleteWorktree(path, force); err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		return m, fetchStatusCmd(m.orchestrator)
+	case confirmUnlock:
+		m.mode = modeList
+		path := m.unlockPath
+		m.unlockPath = ""
+		m.unlockBranch = ""
+		m.errMsg = ""
+		if !confirmed {
+			return m, nil
+		}
+		if err := m.mgr.UnlockWorktree(path); err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		return m, fetchStatusCmd(m.orchestrator)
+	case confirmOpenDebugDelete:
+		path := m.openPickConfirmPath
+		m.openPickConfirmPath = ""
+		m.openPickConfirmBranch = ""
+		if !confirmed {
+			return m, nil
+		}
+		return m, deleteOpenWorktreeCmd(m.mgr, path)
+	case confirmOpenDebugUnlock:
+		path := m.openPickConfirmPath
+		m.openPickConfirmPath = ""
+		m.openPickConfirmBranch = ""
+		if !confirmed {
+			return m, nil
+		}
+		return m, unlockOpenWorktreeCmd(m.mgr, path)
+	case confirmOpenPickLocked:
+		path := m.openPickConfirmPath
+		m.openPickConfirmPath = ""
+		m.openPickConfirmBranch = ""
+		if !confirmed {
+			return m, nil
+		}
+		if err := m.mgr.UnlockWorktree(path); err != nil {
+			m.errMsg = err.Error()
+			return m, nil
+		}
+		if slot, ok := findOpenSlotByPath(m.openSlots, path); ok && slot.Dirty {
+			m.warnMsg = "Worktree is unclean. Clean it first."
+			m.pendingPath = slot.Path
+			m.pendingBranch = slot.Branch
+			m.pendingOpenShell = true
+			m.pendingLock = nil
+			return m, tea.Quit
+		}
+		if slot, ok := findOpenSlotByPath(m.openSlots, path); ok {
+			m.openCreating = true
+			m.openCreatingStartedAt = time.Now()
+			return m, tea.Batch(m.spinner.Tick, openCmdForTargetOnSlot(m, slot))
+		}
+		m.openLoading = true
+		return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), openPickRefreshTickCmd(), m.ghSpinner.Tick)
+	case confirmOpenBaseDefault:
+		var saveCmd tea.Cmd
+		if confirmed {
+			m.openDefaultBaseRef = strings.TrimSpace(m.openTargetBaseRef)
+			saveCmd = saveOpenDefaultsCmd(m.openDefaultBaseRef, m.openDefaultFetch)
+		}
+		if m.openTargetFetch != m.openDefaultFetch {
+			m.confirmResult = false
+			m.confirmKind = confirmOpenFetchDefault
+			m.confirmForm = newConfirmForm(
+				"Save this fetch preference as default?",
+				fmt.Sprintf("%s\ngit fetch first: %t", m.openTargetBranch, m.openTargetFetch),
+				&m.confirmResult,
+			)
+			if saveCmd != nil {
+				return m, tea.Batch(saveCmd, m.confirmForm.Init())
+			}
+			return m, m.confirmForm.Init()
+		}
+		return m.continueOpenTargetSelection(saveCmd)
+	case confirmOpenFetchDefault:
+		var saveCmd tea.Cmd
+		if confirmed {
+			m.openDefaultFetch = m.openTargetFetch
+			saveCmd = saveOpenDefaultsCmd(m.openDefaultBaseRef, m.openDefaultFetch)
+		}
+		return m.continueOpenTargetSelection(saveCmd)
+	default:
+		return m, nil
+	}
+}
+
+func (m model) continueOpenTargetSelection(saveCmd tea.Cmd) (tea.Model, tea.Cmd) {
+	if reusable, ok := findReusableOpenSlot(m.openSlots, m.openTargetBranch); ok {
+		m.openCreating = true
+		m.openCreatingStartedAt = time.Now()
+		cmds := []tea.Cmd{m.spinner.Tick, useExistingWorktreeCmd(m.mgr, reusable.Path, m.openTargetBranch)}
+		if saveCmd != nil {
+			cmds = append([]tea.Cmd{saveCmd}, cmds...)
+		}
+		return m, tea.Batch(cmds...)
+	}
+	if available, ok := findAnyAvailableOpenSlot(m.openSlots); ok {
+		m.openCreating = true
+		m.openCreatingStartedAt = time.Now()
+		cmds := []tea.Cmd{m.spinner.Tick, openCmdForTargetOnSlot(m, available)}
+		if saveCmd != nil {
+			cmds = append([]tea.Cmd{saveCmd}, cmds...)
+		}
+		return m, tea.Batch(cmds...)
+	}
+	m.openStage = openStagePickWorktree
+	m.openPickIndex = 0
+	cmds := []tea.Cmd{loadOpenScreenCmd(m.orchestrator, m.mgr), openPickRefreshTickCmd(), m.ghSpinner.Tick}
+	if saveCmd != nil {
+		cmds = append([]tea.Cmd{saveCmd}, cmds...)
+	}
+	return m, tea.Batch(cmds...)
 }
 
 func syncTabTitleWithSelection(m model) {
@@ -1257,6 +1270,11 @@ func (m model) View() string {
 		}
 		b.WriteString("\n")
 		b.WriteString("Press q to quit.\n")
+		return b.String()
+	}
+
+	if m.confirmForm != nil {
+		b.WriteString(m.confirmForm.View())
 		return b.String()
 	}
 
@@ -1320,31 +1338,6 @@ func (m model) View() string {
 		b.WriteString("\nPress enter to select, esc to cancel.\n")
 		return b.String()
 	}
-	if m.mode == modeDelete {
-		b.WriteString("Delete worktree:\n")
-		b.WriteString(fmt.Sprintf("%s\n", m.deleteBranch))
-		b.WriteString(fmt.Sprintf("%s\n", m.deletePath))
-		if m.errMsg != "" {
-			b.WriteString("\n")
-			b.WriteString(errorStyle.Render(m.errMsg))
-			b.WriteString("\n")
-		}
-		b.WriteString("\nAre you sure? (y/N)\n")
-		return b.String()
-	}
-	if m.mode == modeUnlock {
-		b.WriteString("Unlock worktree:\n")
-		b.WriteString(fmt.Sprintf("%s\n", m.unlockBranch))
-		b.WriteString(fmt.Sprintf("%s\n", m.unlockPath))
-		if m.errMsg != "" {
-			b.WriteString("\n")
-			b.WriteString(errorStyle.Render(m.errMsg))
-			b.WriteString("\n")
-		}
-		b.WriteString("\nAre you sure? (y/N)\n")
-		return b.String()
-	}
-
 	b.WriteString(baseStyle.Render(renderSelector(m.status, m.listIndex, m.ghPendingByBranch, m.ghSpinner.View())))
 	b.WriteString("\n")
 	if m.status.Err != nil {

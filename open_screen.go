@@ -288,21 +288,6 @@ func renderOpenScreen(m model) string {
 			b.WriteString(errorStyle.Render(m.errMsg))
 			b.WriteString("\n")
 		}
-		if m.openConfirmAction != "" {
-			b.WriteString("\n")
-			if m.openConfirmAction == "delete" {
-				b.WriteString(warnStyle.Render("Delete selected worktree? (y/N)"))
-			} else if m.openConfirmAction == "unlock" {
-				b.WriteString(warnStyle.Render("Force unlock selected worktree? (y/N)"))
-			}
-			b.WriteString("\n")
-			if strings.TrimSpace(m.openConfirmBranch) != "" {
-				b.WriteString(secondaryStyle.Render("  "+m.openConfirmBranch) + "\n")
-			}
-			if strings.TrimSpace(m.openConfirmPath) != "" {
-				b.WriteString(secondaryStyle.Render("  "+m.openConfirmPath) + "\n")
-			}
-		}
 		b.WriteString("\nUse up/down to select. d delete selected (with confirm). u unlock selected (with confirm). n new worktree.\n")
 		if m.openDebugCreating {
 			b.WriteString("Type branch name, enter to create, esc to cancel. ")
@@ -320,16 +305,6 @@ func renderOpenScreen(m model) string {
 			checked = " "
 		}
 		b.WriteString(fmt.Sprintf("  [%s] git fetch first (space toggles)\n", checked))
-		if m.openAskBaseDefault {
-			b.WriteString("\n")
-			b.WriteString(warnStyle.Render("Use this 'from' value as default? (y/N)"))
-			b.WriteString("\n")
-		}
-		if m.openAskFetchDefault {
-			b.WriteString("\n")
-			b.WriteString(warnStyle.Render("Use this fetch preference as default? (y/N)"))
-			b.WriteString("\n")
-		}
 		if m.openLoadErr != "" {
 			b.WriteString("\n")
 			b.WriteString(errorStyle.Render("Error: " + m.openLoadErr))
@@ -368,17 +343,6 @@ func renderOpenScreen(m model) string {
 			state := debugWorktreeState(slot)
 			line := fmt.Sprintf("%s%-12s %-24s %s", cursor, state, slot.Branch, slot.Path)
 			b.WriteString(render(line) + "\n")
-		}
-		if m.openPickConfirm {
-			b.WriteString("\n")
-			b.WriteString(warnStyle.Render("Selected worktree is locked. Force unlock and use? (y/N)"))
-			b.WriteString("\n")
-			if strings.TrimSpace(m.openPickConfirmBranch) != "" {
-				b.WriteString(secondaryStyle.Render("  "+m.openPickConfirmBranch) + "\n")
-			}
-			if strings.TrimSpace(m.openPickConfirmPath) != "" {
-				b.WriteString(secondaryStyle.Render("  "+m.openPickConfirmPath) + "\n")
-			}
 		}
 		if m.openLoadErr != "" {
 			b.WriteString("\n")
@@ -646,4 +610,3 @@ func worktreeLockedByAny(orchestrator *WorktreeOrchestrator, repoRoot string, wo
 	}
 	return !available, nil
 }
-
