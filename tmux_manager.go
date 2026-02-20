@@ -190,7 +190,7 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	cmd := "#(" + shellQuote(bin) + " tmux-status --worktree " + shellQuote(worktreePath) + ")"
 	configureTmuxStatus(sessionID, "300", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
-	tmuxSetOption(sessionID, "status-right", " ⌥← → panes | ^⇧↑↓ resize | ^S shell | ^A ide | ^P pr ")
+	tmuxSetOption(sessionID, "status-right", " ^⇧↑↓ resize | ^S shell | ^A ide | ^P pr ")
 	tmuxSetOption(sessionID, "status-right-length", "64")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
@@ -237,11 +237,9 @@ func ensureWTXSessionDefaults() {
 	tmuxSetOption(sessionID, "destroy-unattached", "on")
 	// Disable mouse so normal terminal copy (Cmd+C) works.
 	tmuxSetOption(sessionID, "mouse", "off")
-	// Bind Option+arrow keys for quick pane navigation.
-	_ = exec.Command("tmux", "bind-key", "-n", "M-Up", "select-pane", "-U").Run()
-	_ = exec.Command("tmux", "bind-key", "-n", "M-Down", "select-pane", "-D").Run()
-	_ = exec.Command("tmux", "bind-key", "-n", "M-Left", "select-pane", "-L").Run()
-	_ = exec.Command("tmux", "bind-key", "-n", "M-Right", "select-pane", "-R").Run()
+	// Stop hijacking Option+Left/Right so editor navigation keeps working.
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-Left").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-Right").Run()
 	// Bind Ctrl+Shift+Up/Down for quick vertical pane resizing (avoids common macOS Ctrl+Arrow shortcuts).
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "C-S-Up", "resize-pane", "-U", "3").Run()
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "C-S-Down", "resize-pane", "-D", "3").Run()

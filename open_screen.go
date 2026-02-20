@@ -296,15 +296,10 @@ func renderOpenScreen(m model) string {
 		return b.String()
 	}
 	if m.openStage == openStageNewBranchConfig {
-		b.WriteString("Branch:\n")
-		b.WriteString("  " + secondaryStyle.Render(m.openTargetBranch) + "\n")
-		b.WriteString("From:\n")
-		b.WriteString("  " + inputStyle.Render(m.openBaseRefInput.View()) + "\n")
-		checked := "x"
-		if !m.openTargetFetch {
-			checked = " "
+		if m.openNewBranchForm != nil {
+			b.WriteString(m.openNewBranchForm.View())
+			b.WriteString("\n")
 		}
-		b.WriteString(fmt.Sprintf("  [%s] git fetch first (space toggles)\n", checked))
 		if m.openLoadErr != "" {
 			b.WriteString("\n")
 			b.WriteString(errorStyle.Render("Error: " + m.openLoadErr))
@@ -314,12 +309,6 @@ func renderOpenScreen(m model) string {
 			b.WriteString("\n")
 			b.WriteString(errorStyle.Render(m.errMsg))
 			b.WriteString("\n")
-		}
-		b.WriteString("\n")
-		if m.openLoading {
-			b.WriteString("Loading in progress. Enter is disabled. Space toggles fetch. Esc cancels. Ctrl+R refreshes.\n")
-		} else {
-			b.WriteString("Type From value. Space toggles fetch. Enter continues. Esc cancels. Ctrl+R refreshes.\n")
 		}
 		return b.String()
 	}
@@ -362,28 +351,6 @@ func renderOpenScreen(m model) string {
 		b.WriteString("\nUse up/down to choose, enter to select. Esc goes back. Ctrl+R refreshes (auto-refresh every 2s).\n")
 		return b.String()
 	}
-	if m.openEnteringNew {
-		b.WriteString("New branch name:\n")
-		b.WriteString("  " + inputStyle.Render(m.newBranchInput.View()) + "\n")
-		if m.openLoadErr != "" {
-			b.WriteString("\n")
-			b.WriteString(errorStyle.Render("Error: " + m.openLoadErr))
-			b.WriteString("\n")
-		}
-		if m.errMsg != "" {
-			b.WriteString("\n")
-			b.WriteString(errorStyle.Render(m.errMsg))
-			b.WriteString("\n")
-		}
-		b.WriteString("\n")
-		if m.openLoading {
-			b.WriteString("Type branch name. Enter continues to setup (loading-safe). Esc cancels. Ctrl+R refreshes. Ctrl+D debug.\n")
-		} else {
-			b.WriteString("Type branch name, enter to continue to setup, esc to cancel, Ctrl+R to refresh. Ctrl+D debug.\n")
-		}
-		return b.String()
-	}
-
 	b.WriteString("Choose branch:\n")
 	newBranchLine := "  <new branch>"
 	if m.openSelected == 0 {

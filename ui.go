@@ -59,7 +59,6 @@ type model struct {
 	openLoading           bool
 	openLoadErr           string
 	openSelected          int
-	openEnteringNew       bool
 	openTypeahead         string
 	openTypeaheadAt       time.Time
 	openBranches          []openBranchOption
@@ -80,7 +79,10 @@ type model struct {
 	openPickConfirmBranch string
 	openDefaultBaseRef    string
 	openDefaultFetch      bool
-	openBaseRefInput      textinput.Model
+	openNewBranchForm     *huh.Form
+	openFormBranchPtr     *string
+	openFormBaseRefPtr    *string
+	openFormFetchPtr      *bool
 	confirmForm           *huh.Form
 	confirmResult         bool
 	confirmKind           confirmKind
@@ -107,7 +109,6 @@ func newModel() model {
 	m.openStage = openStageMain
 	m.openSelected = 0
 	m.openDefaultFetch = true
-	m.openBaseRefInput = newBaseRefInput()
 	if cfg, err := LoadConfig(); err == nil {
 		if strings.TrimSpace(cfg.NewBranchBaseRef) != "" {
 			m.openDefaultBaseRef = strings.TrimSpace(cfg.NewBranchBaseRef)
@@ -138,6 +139,65 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	}
+	if m.openNewBranchForm != nil {
+		applyFormMsg := func(formMsg tea.Msg) (tea.Model, tea.Cmd) {
+			form, cmd := m.openNewBranchForm.Update(formMsg)
+			if f, ok := form.(*huh.Form); ok {
+				m.openNewBranchForm = f
+			}
+			if m.openNewBranchForm.State == huh.StateCompleted || m.openNewBranchForm.State == huh.StateAborted {
+				return m.handleOpenNewBranchFormDone()
+			}
+			return m, cmd
+		}
+		if keyMsg, ok := msg.(tea.KeyMsg); ok {
+			switch keyMsg.Type {
+			case tea.KeyEsc:
+				m.openNewBranchForm = nil
+				m.openStage = openStageMain
+				m.openFormBranchPtr = nil
+				m.openFormBaseRefPtr = nil
+				m.openFormFetchPtr = nil
+				m.errMsg = ""
+				return m, nil
+			case tea.KeyUp:
+				return applyFormMsg(tea.KeyMsg{Type: tea.KeyShiftTab})
+			case tea.KeyDown, tea.KeyTab:
+				return applyFormMsg(tea.KeyMsg{Type: tea.KeyTab})
+			case tea.KeyShiftTab:
+				return applyFormMsg(tea.KeyMsg{Type: tea.KeyShiftTab})
+			case tea.KeyEnter, tea.KeyCtrlJ:
+				return m.submitOpenNewBranchForm()
+			case tea.KeyRunes:
+				if len(keyMsg.Runes) > 0 && (keyMsg.Runes[0] == '\n' || keyMsg.Runes[0] == '\r') {
+					return m.submitOpenNewBranchForm()
+				}
+			}
+			switch keyMsg.String() {
+			case "q", "ctrl+c":
+				return m, tea.Quit
+			case "ctrl+r":
+				m.openLoading = true
+				m.openLoadErr = ""
+				return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), m.ghSpinner.Tick)
+			case "esc":
+				m.openNewBranchForm = nil
+				m.openStage = openStageMain
+				m.openFormBranchPtr = nil
+				m.openFormBaseRefPtr = nil
+				m.openFormFetchPtr = nil
+				m.errMsg = ""
+				return m, nil
+			case "up", "k", "shift+tab":
+				return applyFormMsg(tea.KeyMsg{Type: tea.KeyShiftTab})
+			case "down", "j", "tab":
+				return applyFormMsg(tea.KeyMsg{Type: tea.KeyTab})
+			case "enter", "ctrl+m":
+				return m.submitOpenNewBranchForm()
+			}
+		}
+		return applyFormMsg(msg)
+	}
 	switch msg := msg.(type) {
 	case openScreenLoadedMsg:
 		m.ready = true
@@ -156,7 +216,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openLockedBranches = msg.lockedBranches
 		m.openSlots = msg.slots
 		m.openPRBranches = msg.prBranches
-		m.openEnteringNew = false
 		m.openTypeahead = ""
 		m.openDebugIndex = clampOpenDebugIndex(m.openDebugIndex, len(msg.slots))
 		m.openDebugCreating = false
@@ -167,8 +226,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if m.openStage == openStageMain {
-			m.openBaseRefInput.SetValue(m.openDefaultBaseRef)
-			m.openBaseRefInput.Blur()
 			m.newBranchInput.Blur()
 		}
 		m.openSelected = clampOpenSelection(m.openSelected, len(m.openBranches))
@@ -320,7 +377,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == modeList {
 			return m, tea.Batch(fetchStatusCmd(m.orchestrator), pollStatusTickCmd())
 		}
-		if m.mode == modeOpen && !m.openCreating && m.openStage == openStageMain && !m.openEnteringNew && !m.openShowDebug && strings.TrimSpace(m.openTypeahead) == "" {
+		if m.mode == modeOpen && !m.openCreating && m.openStage == openStageMain && !m.openShowDebug && strings.TrimSpace(m.openTypeahead) == "" {
 			return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), pollStatusTickCmd())
 		}
 		return m, pollStatusTickCmd()
@@ -485,60 +542,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			if m.openStage == openStageNewBranchConfig {
 				switch msg.String() {
-				case "ctrl+r":
-					m.openLoading = true
-					m.openLoadErr = ""
-					return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), m.ghSpinner.Tick)
 				case "esc":
 					m.openStage = openStageMain
-					m.openEnteringNew = false
-					m.newBranchInput.Blur()
-					m.openBaseRefInput.Blur()
-					return m, nil
-				case " ":
-					m.openTargetFetch = !m.openTargetFetch
-					return m, nil
-				case "enter":
-					branch := strings.TrimSpace(m.newBranchInput.Value())
-					if branch == "" {
-						m.errMsg = "Branch name required."
-						return m, nil
-					}
-					base := strings.TrimSpace(m.openBaseRefInput.Value())
-					if base == "" {
-						base = m.openDefaultBaseRef
-					}
-					if strings.TrimSpace(base) == "" {
-						base = "origin/main"
-					}
-					m.openTargetBranch = branch
-					m.openTargetIsNew = true
-					m.openTargetBaseRef = base
-					if m.openTargetBaseRef != m.openDefaultBaseRef {
-						m.confirmResult = false
-						m.confirmKind = confirmOpenBaseDefault
-						m.confirmForm = newConfirmForm(
-							"Save this base ref as default?",
-							fmt.Sprintf("%s\n%s", m.openTargetBranch, m.openTargetBaseRef),
-							&m.confirmResult,
-						)
-						return m, m.confirmForm.Init()
-					}
-					if m.openTargetFetch != m.openDefaultFetch {
-						m.confirmResult = false
-						m.confirmKind = confirmOpenFetchDefault
-						m.confirmForm = newConfirmForm(
-							"Save this fetch preference as default?",
-							fmt.Sprintf("%s\ngit fetch first: %t", m.openTargetBranch, m.openTargetFetch),
-							&m.confirmResult,
-						)
-						return m, m.confirmForm.Init()
-					}
-					return m.continueOpenTargetSelection(nil)
+					m.openNewBranchForm = nil
+					m.openFormBranchPtr = nil
+					m.openFormBaseRefPtr = nil
+					m.openFormFetchPtr = nil
+					m.errMsg = ""
 				}
-				var cmd tea.Cmd
-				m.openBaseRefInput, cmd = m.openBaseRefInput.Update(msg)
-				return m, cmd
+				return m, nil
 			}
 			if m.openStage == openStagePickWorktree {
 				switch msg.String() {
@@ -595,40 +607,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if msg.String() == "ctrl+r" {
 				m.openLoading = true
 				m.openLoadErr = ""
-				m.openEnteringNew = false
 				m.openTypeahead = ""
-				m.newBranchInput.Blur()
 				return m, tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), m.ghSpinner.Tick)
-			}
-			if m.openEnteringNew {
-				switch msg.String() {
-				case "enter":
-					branch := strings.TrimSpace(m.newBranchInput.Value())
-					if branch == "" {
-						m.errMsg = "Branch name required."
-						return m, nil
-					}
-					m.openStage = openStageNewBranchConfig
-					m.openEnteringNew = false
-					m.openTargetBranch = branch
-					m.openTargetIsNew = true
-					m.openTargetFetch = m.openDefaultFetch
-					m.openTargetBaseRef = m.openDefaultBaseRef
-					m.openBaseRefInput.SetValue(m.openDefaultBaseRef)
-					m.newBranchInput.Blur()
-					m.openBaseRefInput.Focus()
-					m.errMsg = ""
-					return m, nil
-				case "esc":
-					m.openEnteringNew = false
-					m.newBranchInput.Blur()
-					m.newBranchInput.SetValue("")
-					m.errMsg = ""
-					return m, nil
-				}
-				var cmd tea.Cmd
-				m.newBranchInput, cmd = m.newBranchInput.Update(msg)
-				return m, cmd
 			}
 			switch msg.String() {
 			case "up":
@@ -641,11 +621,24 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				if m.openSelected == 0 {
-					m.openEnteringNew = true
+					defaultBase := strings.TrimSpace(m.openDefaultBaseRef)
+					if defaultBase == "" {
+						defaultBase = strings.TrimSpace(m.status.BaseRef)
+					}
+					if defaultBase == "" {
+						defaultBase = "origin/main"
+					}
+					branch := ""
+					baseRef := defaultBase
+					fetch := m.openDefaultFetch
+					m.openStage = openStageNewBranchConfig
+					m.openFormBranchPtr = &branch
+					m.openFormBaseRefPtr = &baseRef
+					m.openFormFetchPtr = &fetch
+					m.openNewBranchForm = newOpenNewBranchForm(m.openFormBranchPtr, m.openFormBaseRefPtr, m.openFormFetchPtr)
 					m.openTypeahead = ""
-					m.newBranchInput.Focus()
 					m.errMsg = ""
-					return m, nil
+					return m, m.openNewBranchForm.Init()
 				}
 				index := m.openSelected - 1
 				if index < 0 || index >= len(m.openBranches) {
@@ -1194,6 +1187,97 @@ func (m model) handleConfirmDone() (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m model) handleOpenNewBranchFormDone() (tea.Model, tea.Cmd) {
+	if m.openNewBranchForm == nil {
+		return m, nil
+	}
+	aborted := m.openNewBranchForm.State == huh.StateAborted
+	if aborted {
+		m.openNewBranchForm = nil
+		m.openStage = openStageMain
+		m.openFormBranchPtr = nil
+		m.openFormBaseRefPtr = nil
+		m.openFormFetchPtr = nil
+		m.errMsg = ""
+		return m, nil
+	}
+	return m.submitOpenNewBranchForm()
+}
+
+func (m model) submitOpenNewBranchForm() (tea.Model, tea.Cmd) {
+	branch := ""
+	base := ""
+	fetch := m.openDefaultFetch
+	if m.openFormBranchPtr != nil {
+		branch = strings.TrimSpace(*m.openFormBranchPtr)
+	}
+	if m.openFormBaseRefPtr != nil {
+		base = strings.TrimSpace(*m.openFormBaseRefPtr)
+	}
+	if m.openFormFetchPtr != nil {
+		fetch = *m.openFormFetchPtr
+	}
+	if m.openNewBranchForm != nil {
+		if focused := m.openNewBranchForm.GetFocusedField(); focused != nil {
+			switch focused.GetKey() {
+			case openNewBranchNameKey:
+				if v := strings.TrimSpace(fmt.Sprint(focused.GetValue())); v != "" {
+					branch = v
+				}
+			case openNewBaseRefKey:
+				if v := strings.TrimSpace(fmt.Sprint(focused.GetValue())); v != "" {
+					base = v
+				}
+			case openNewFetchKey:
+				if v, ok := focused.GetValue().(bool); ok {
+					fetch = v
+				}
+			}
+		}
+	}
+	if branch == "" {
+		m.errMsg = "Branch name required."
+		return m, nil
+	}
+	if base == "" {
+		base = m.openDefaultBaseRef
+	}
+	if strings.TrimSpace(base) == "" {
+		base = "origin/main"
+	}
+	m.openTargetBranch = branch
+	m.openTargetIsNew = true
+	m.openTargetBaseRef = base
+	m.openTargetFetch = fetch
+	m.openNewBranchForm = nil
+	m.openFormBranchPtr = nil
+	m.openFormBaseRefPtr = nil
+	m.openFormFetchPtr = nil
+	m.openStage = openStageMain
+	m.errMsg = ""
+	if m.openTargetBaseRef != m.openDefaultBaseRef {
+		m.confirmResult = false
+		m.confirmKind = confirmOpenBaseDefault
+		m.confirmForm = newConfirmForm(
+			"Save this base ref as default?",
+			fmt.Sprintf("%s\n%s", m.openTargetBranch, m.openTargetBaseRef),
+			&m.confirmResult,
+		)
+		return m, m.confirmForm.Init()
+	}
+	if m.openTargetFetch != m.openDefaultFetch {
+		m.confirmResult = false
+		m.confirmKind = confirmOpenFetchDefault
+		m.confirmForm = newConfirmForm(
+			"Save this fetch preference as default?",
+			fmt.Sprintf("%s\ngit fetch first: %t", m.openTargetBranch, m.openTargetFetch),
+			&m.confirmResult,
+		)
+		return m, m.confirmForm.Init()
+	}
+	return m.continueOpenTargetSelection(nil)
 }
 
 func (m model) continueOpenTargetSelection(saveCmd tea.Cmd) (tea.Model, tea.Cmd) {
@@ -1772,14 +1856,6 @@ func newBranchInput() textinput.Model {
 func newCreateBranchInput() textinput.Model {
 	ti := textinput.New()
 	ti.Placeholder = "feature/my-branch"
-	ti.CharLimit = 200
-	ti.Width = 40
-	return ti
-}
-
-func newBaseRefInput() textinput.Model {
-	ti := textinput.New()
-	ti.Placeholder = "origin/main"
 	ti.CharLimit = 200
 	ti.Width = 40
 	return ti
