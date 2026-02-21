@@ -1,6 +1,7 @@
 package e2e
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -9,6 +10,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 type runResult struct {
@@ -131,6 +133,25 @@ func setupRepoWithManagedWorktree(t *testing.T) testRepo {
 	runCmd(t, repoRoot, nil, "git", "worktree", "add", "-b", "slot/one", managedWorktree, "main")
 
 	return testRepo{root: repoRoot, worktree: managedRoot, managedWT: managedWorktree}
+}
+
+func setupSingleWorktreeRepo(t *testing.T) string {
+	t.Helper()
+	repoRoot := filepath.Join(t.TempDir(), "repo")
+	if err := os.MkdirAll(repoRoot, 0o755); err != nil {
+		t.Fatalf("mkdir repo: %v", err)
+	}
+	runCmd(t, repoRoot, nil, "git", "init")
+	runCmd(t, repoRoot, nil, "git", "checkout", "-B", "main")
+	runCmd(t, repoRoot, nil, "git", "config", "user.email", "e2e@example.test")
+	runCmd(t, repoRoot, nil, "git", "config", "user.name", "WTX E2E")
+	if err := os.WriteFile(filepath.Join(repoRoot, "README.md"), []byte("root\n"), 0o644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	runCmd(t, repoRoot, nil, "git", "add", "README.md")
+	runCmd(t, repoRoot, nil, "git", "commit", "-m", "init")
+	runCmd(t, repoRoot, nil, "git", "branch", "feature/existing")
+	return repoRoot
 }
 
 func toolPathDir(t *testing.T, includeGit bool) string {
@@ -258,6 +279,58 @@ func TestCheckoutNewBranchNonInteractive(t *testing.T) {
 		t.Fatalf("expected feature/new to be checked out in a worktree, got root=%q slot=%q", rootBranch, slotBranch)
 	}
 	runCmd(t, repo.root, nil, "git", "show-ref", "--verify", "refs/heads/feature/new")
+}
+
+func TestCheckoutLocksWorktreeDuringActiveRun(t *testing.T) {
+	repoRoot := setupSingleWorktreeRepo(t)
+	home := t.TempDir()
+	writeConfig(t, home, "sleep 3")
+	envA := testEnv(home)
+	envA["WTX_OWNER_ID"] = "owner-a"
+	envB := testEnv(home)
+	envB["WTX_OWNER_ID"] = "owner-b"
+
+	cmd := exec.Command(wtxBin(t), "co", "feature/existing")
+	cmd.Dir = repoRoot
+	cmd.Env = append([]string{}, os.Environ()...)
+	for k, v := range envA {
+		cmd.Env = append(cmd.Env, k+"="+v)
+	}
+	var firstOut bytes.Buffer
+	cmd.Stdout = &firstOut
+	cmd.Stderr = &firstOut
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start first checkout: %v", err)
+	}
+
+	lockedObserved := false
+	locksDir := filepath.Join(home, ".wtx", "locks")
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		matches, _ := filepath.Glob(filepath.Join(locksDir, "*.lock"))
+		if len(matches) > 0 {
+			result := runWTX(t, repoRoot, envB, "co", "feature/existing")
+			if result.err != nil && strings.Contains(result.out, "worktree locked") {
+				lockedObserved = true
+			}
+			break
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if !lockedObserved {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		t.Fatalf("expected lock contention while first checkout is active\nfirst output:\n%s", firstOut.String())
+	}
+
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("first checkout failed: %v\n%s", err, firstOut.String())
+	}
+
+	after := runWTX(t, repoRoot, envB, "co", "feature/existing")
+	if after.err != nil {
+		t.Fatalf("checkout after lock release failed: %v\n%s", after.err, after.out)
+	}
 }
 
 func TestCheckoutValidationErrorNonInteractive(t *testing.T) {
