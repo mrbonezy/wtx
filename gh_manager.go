@@ -717,11 +717,7 @@ func reviewThreadCountsForPR(ghPath string, repoRoot string, owner string, name 
 }
 
 func resolveGitHubRepo(repoRoot string) (string, string, error) {
-	gitPath, err := requireGitPath()
-	if err != nil {
-		return "", "", err
-	}
-	remote, err := gitOutputInDir(repoRoot, gitPath, "remote", "get-url", "origin")
+	remote, err := gitOutputInDir(repoRoot, "git", "remote", "get-url", "origin")
 	if err != nil {
 		return "", "", err
 	}

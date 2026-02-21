@@ -195,9 +195,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.openFormFetchPtr = nil
 				m.errMsg = ""
 				return m, nil
-			case "up", "k", "shift+tab":
+			case "up", "shift+tab":
 				return applyFormMsg(tea.KeyMsg{Type: tea.KeyShiftTab})
-			case "down", "j", "tab":
+			case "down", "tab":
 				return applyFormMsg(tea.KeyMsg{Type: tea.KeyTab})
 			case "enter", "ctrl+m":
 				return m.submitOpenNewBranchForm()

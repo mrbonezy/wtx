@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -570,21 +569,15 @@ func ensureOpenSelectionVisible(current int, filtered []int) int {
 }
 
 func worktreeDirty(path string) (bool, error) {
-	gitBin, err := requireGitPath()
+	gitOut, err := gitOutputInDir(path, "git", "status", "--porcelain")
 	if err != nil {
-		return false, err
-	}
-	cmd := exec.Command(gitBin, "status", "--porcelain")
-	cmd.Dir = path
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		msg := strings.TrimSpace(string(out))
+		msg := strings.TrimSpace(gitOut)
 		if msg == "" {
 			return false, err
 		}
 		return false, fmt.Errorf("git status failed for %s: %s", path, msg)
 	}
-	return strings.TrimSpace(string(out)) != "", nil
+	return strings.TrimSpace(gitOut) != "", nil
 }
 
 func worktreeLockedByAny(orchestrator *WorktreeOrchestrator, repoRoot string, worktreePath string) (bool, error) {

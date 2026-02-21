@@ -68,11 +68,7 @@ func buildTmuxTitle(worktreePath string) string {
 }
 
 func currentBranchInWorktree(worktreePath string) string {
-	gitPath, err := gitPath()
-	if err != nil {
-		return ""
-	}
-	branch, err := gitOutputInDir(worktreePath, gitPath, "rev-parse", "--abbrev-ref", "HEAD")
+	branch, err := gitOutputInDir(worktreePath, "git", "rev-parse", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return ""
 	}
@@ -88,11 +84,7 @@ func ghSummaryForBranchCached(worktreePath string, branch string) string {
 	if branch == "" {
 		return "PR - | CI - | Review -"
 	}
-	gitPath, err := gitPath()
-	if err != nil {
-		return "PR - | CI - | Review -"
-	}
-	repoRoot, err := repoRootForDir(worktreePath, gitPath)
+	repoRoot, err := repoRootForDir(worktreePath, "")
 	if err != nil {
 		return "PR - | CI - | Review -"
 	}

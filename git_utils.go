@@ -2,8 +2,9 @@ package main
 
 import (
 	"errors"
+	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
 )
 
 var errGitNotInstalled = errors.New("git not installed")
@@ -22,21 +23,36 @@ func requireGitPath() (string, error) {
 }
 
 func repoRootForDir(dir string, gitBin string) (string, error) {
-	repoRoot, err := gitOutputInDir(dir, gitBin, "rev-parse", "--show-toplevel")
-	if err != nil || strings.TrimSpace(repoRoot) == "" {
+	_ = gitBin
+	if dir == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", errNotInGitRepository
+		}
+		dir = wd
+	}
+	current, err := filepath.Abs(dir)
+	if err != nil {
 		return "", errNotInGitRepository
 	}
-	return repoRoot, nil
+	for {
+		dotGit := filepath.Join(current, ".git")
+		if _, err := os.Stat(dotGit); err == nil {
+			return current, nil
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			break
+		}
+		current = parent
+	}
+	return "", errNotInGitRepository
 }
 
 func requireGitContext(dir string) (string, string, error) {
-	gitBin, err := requireGitPath()
+	repoRoot, err := repoRootForDir(dir, "git")
 	if err != nil {
 		return "", "", err
 	}
-	repoRoot, err := repoRootForDir(dir, gitBin)
-	if err != nil {
-		return "", "", err
-	}
-	return gitBin, repoRoot, nil
+	return "git", repoRoot, nil
 }

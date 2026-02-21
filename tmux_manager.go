@@ -40,16 +40,25 @@ func ensureFreshTmuxSession(args []string) (bool, error) {
 	setITermWTXTab()
 
 	session := fmt.Sprintf("wtx-%d", time.Now().UnixNano())
-	tmuxArgs := []string{"new-session", "-d", "-e", "WTX_STATUS_BIN=" + bin, "-s", session, "-c", cwd, bin}
-	if len(args) > 1 {
-		tmuxArgs = append(tmuxArgs, args[1:]...)
-	}
+	tmuxArgs := []string{"new-session", "-d", "-e", "WTX_STATUS_BIN=" + bin, "-s", session, "-c", cwd}
 	cmd := exec.Command("tmux", tmuxArgs...)
-	if err := cmd.Run(); err != nil {
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		msg := strings.TrimSpace(string(out))
+		if msg != "" {
+			return false, fmt.Errorf("tmux new-session failed: %s", msg)
+		}
 		return false, err
 	}
 
 	applyStartupThemeToSession(session, cwd)
+	launchErrCh := make(chan error, 1)
+	go func() {
+		// Attach first, then launch the command in the session pane to avoid
+		// attach races where the session disappears before the client attaches.
+		time.Sleep(120 * time.Millisecond)
+		launchErrCh <- launchCommandInSession(session, bin, args[1:])
+	}()
 
 	attach := exec.Command("tmux", "attach-session", "-t", session)
 	attach.Stdin = os.Stdin
@@ -57,6 +66,13 @@ func ensureFreshTmuxSession(args []string) (bool, error) {
 	attach.Stderr = os.Stderr
 	if err := attach.Run(); err != nil {
 		return false, err
+	}
+	select {
+	case launchErr := <-launchErrCh:
+		if launchErr != nil {
+			return false, launchErr
+		}
+	default:
 	}
 	return true, nil
 }
@@ -69,6 +85,20 @@ func applyStartupThemeToSession(sessionID string, cwd string) {
 	banner := stripANSI(renderBanner("", cwd, ""))
 	configureTmuxStatus(sessionID, "200", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+banner+" ")
+}
+
+func launchCommandInSession(sessionID string, bin string, args []string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	bin = strings.TrimSpace(bin)
+	if sessionID == "" || bin == "" {
+		return fmt.Errorf("session and binary are required")
+	}
+	command := shellQuote(bin)
+	for _, arg := range args {
+		command += " " + shellQuote(arg)
+	}
+	// Run directly in the pane so the command isn't visibly typed into the shell.
+	return exec.Command("tmux", "respawn-pane", "-k", "-t", sessionID+":0.0", command).Run()
 }
 
 func resolveSelfBinary(args []string) (string, error) {
@@ -522,11 +552,7 @@ func tmuxAgentStatePath(worktreePath string) (string, error) {
 	if worktreePath == "" {
 		return "", os.ErrInvalid
 	}
-	gitPath, err := gitPath()
-	if err != nil {
-		return "", err
-	}
-	repoRoot, err := repoRootForDir(worktreePath, gitPath)
+	repoRoot, err := repoRootForDir(worktreePath, "git")
 	if err != nil {
 		return "", err
 	}

@@ -134,8 +134,10 @@ func startDelayedSpinner(message string, delay time.Duration) func() {
 	}
 
 	done := make(chan struct{})
+	stopped := make(chan struct{})
 	var once sync.Once
 	go func() {
+		defer close(stopped)
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		select {
@@ -152,12 +154,12 @@ func startDelayedSpinner(message string, delay time.Duration) func() {
 		}
 		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-			i := 0
-			for {
-				frame := frames[i%len(frames)]
-				frame = s.Style.Render(frame)
-				fmt.Fprintf(os.Stderr, "\r%s %s", frame, message)
-				i++
+		i := 0
+		for {
+			frame := frames[i%len(frames)]
+			frame = s.Style.Render(frame)
+			fmt.Fprintf(os.Stderr, "\r%s %s", frame, message)
+			i++
 			select {
 			case <-done:
 				fmt.Fprint(os.Stderr, "\r\033[2K")
@@ -169,6 +171,7 @@ func startDelayedSpinner(message string, delay time.Duration) func() {
 	return func() {
 		once.Do(func() {
 			close(done)
+			<-stopped
 		})
 	}
 }
