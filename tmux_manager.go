@@ -222,7 +222,7 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	cmd := "#(" + shellQuote(bin) + " tmux-status --worktree " + shellQuote(worktreePath) + ")"
 	configureTmuxStatus(sessionID, "300", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
-	tmuxSetOption(sessionID, "status-right", " ^⇧↑↓ resize | ^S shell | ^A ide | ^P pr ")
+	tmuxSetOption(sessionID, "status-right", " ^A actions#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} ")
 	tmuxSetOption(sessionID, "status-right-length", "64")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
@@ -280,9 +280,9 @@ func ensureWTXSessionDefaults() {
 	// Stop hijacking Option+Left/Right so editor navigation keeps working.
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-Left").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-Right").Run()
-	// Bind Ctrl+Shift+Up/Down for quick vertical pane resizing (avoids common macOS Ctrl+Arrow shortcuts).
-	_ = exec.Command("tmux", "bind-key", "-r", "-n", "C-S-Up", "resize-pane", "-U", "3").Run()
-	_ = exec.Command("tmux", "bind-key", "-r", "-n", "C-S-Down", "resize-pane", "-D", "3").Run()
+	// Only resize when split panes are present.
+	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-S-Up", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -U 3").Run()
+	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-S-Down", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -D 3").Run()
 	// Preserve modified key chords (for example Shift+Enter in coding agents) inside wtx-managed tmux sessions.
 	tmuxSetWindowOption(sessionID, "xterm-keys", "on")
 	tmuxSetGlobalWindowOption("xterm-keys", "on")
@@ -291,18 +291,16 @@ func ensureWTXSessionDefaults() {
 	tmuxAppendServerOption("terminal-features", ",*:extkeys")
 	tmuxAppendGlobalOption("terminal-features", ",*:extkeys")
 
-	// Bind ctrl+s to split and open shell in current pane's directory
-	// Bind ctrl+a to open IDE picker popup
-	// Bind ctrl+p to open PR for current branch in browser
+	// Replace direct Ctrl shortcuts with a single actions popup.
+	_ = exec.Command("tmux", "unbind-key", "-n", "C-s").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "C-a").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "C-p").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-a").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-A").Run()
 	wtxBin := resolveAgentLifecycleBinary()
 	if strings.TrimSpace(wtxBin) != "" {
-		// Use split-window directly for shell (faster, no need to resolve path)
-		_ = exec.Command("tmux", "bind-key", "-n", "C-s", "split-window", "-v", "-p", "50", "-c", "#{pane_current_path}").Run()
-		// For IDE, use popup with directory picker TUI
-		idePickerCmd := fmt.Sprintf("%s ide-picker #{pane_current_path}", strings.ReplaceAll(wtxBin, "'", "'\\''"))
-		_ = exec.Command("tmux", "bind-key", "-n", "C-a", "popup", "-E", "-w", "60", "-h", "20", idePickerCmd).Run()
-		// For PR, use gh pr view --web directly
-		_ = exec.Command("tmux", "bind-key", "-n", "C-p", "run-shell", "-b", "cd #{pane_current_path} && gh pr view --web").Run()
+		actionsPopupCmd := tmuxActionsPopupCommand(wtxBin)
+		_ = exec.Command("tmux", "bind-key", "-n", "C-a", "popup", "-E", "-w", "60", "-h", "20", actionsPopupCmd).Run()
 	}
 }
 
