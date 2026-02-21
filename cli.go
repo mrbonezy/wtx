@@ -27,6 +27,7 @@ func newRootCommand(args []string) *cobra.Command {
 
 	root.AddCommand(
 		newCheckoutCommand(),
+		newPRCommand(),
 		newConfigCommand(),
 		newCompletionCommand(),
 		newUpdateCommand(),
