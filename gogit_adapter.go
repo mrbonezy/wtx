@@ -23,6 +23,11 @@ func gitCommandOutputInDir(dir string, args ...string) (string, bool, error) {
 	if len(args) == 0 {
 		return "", false, nil
 	}
+	if isLinkedWorktreeDir(dir) {
+		// go-git linked-worktree support is incomplete for command emulation;
+		// use the real git binary in those directories.
+		return "", false, nil
+	}
 
 	switch args[0] {
 	case "worktree":
@@ -47,6 +52,23 @@ func gitCommandOutputInDir(dir string, args ...string) (string, bool, error) {
 	default:
 		return "", false, nil
 	}
+}
+
+func isLinkedWorktreeDir(dir string) bool {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return false
+	}
+	dotGit := filepath.Join(dir, ".git")
+	info, err := os.Stat(dotGit)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	data, err := os.ReadFile(dotGit)
+	if err != nil {
+		return false
+	}
+	return strings.HasPrefix(strings.TrimSpace(string(data)), "gitdir:")
 }
 
 func openRepo(dir string) (*git.Repository, string, error) {

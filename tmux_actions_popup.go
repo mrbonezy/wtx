@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -32,6 +34,7 @@ type tmuxActionsModel struct {
 	index    int
 	chosen   tmuxAction
 	cancel   bool
+	prKnown  bool
 }
 
 func newTmuxActionsModel(basePath string, prAvailable bool, canOpenITermTab bool) tmuxActionsModel {
@@ -51,10 +54,25 @@ func newTmuxActionsModel(basePath string, prAvailable bool, canOpenITermTab bool
 	}
 }
 
-func (m tmuxActionsModel) Init() tea.Cmd { return nil }
+type prAvailabilityMsg struct {
+	available bool
+}
+
+func (m tmuxActionsModel) Init() tea.Cmd {
+	return checkPRAvailabilityCmd(m.basePath)
+}
 
 func (m tmuxActionsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case prAvailabilityMsg:
+		m.prKnown = true
+		for i := range m.items {
+			if m.items[i].Action == tmuxActionPR {
+				m.items[i].Disabled = !msg.available
+				break
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c", "esc":
@@ -107,7 +125,11 @@ func (m tmuxActionsModel) View() string {
 		}
 		label := item.Label
 		if item.Disabled {
-			label += " (unavailable)"
+			if item.Action == tmuxActionPR && !m.prKnown {
+				label += " (checking...)"
+			} else {
+				label += " (unavailable)"
+			}
 		}
 		switch {
 		case item.Disabled:
@@ -137,9 +159,8 @@ func runTmuxActions(args []string) error {
 		basePath = cwd
 	}
 
-	prAvailable := hasCurrentPR(basePath)
 	canOpenITermTab := canOpenShellInITermTab()
-	program := tea.NewProgram(newTmuxActionsModel(basePath, prAvailable, canOpenITermTab))
+	program := tea.NewProgram(newTmuxActionsModel(basePath, false, canOpenITermTab))
 	finalModel, err := program.Run()
 	if err != nil {
 		return err
@@ -173,7 +194,9 @@ func hasCurrentPR(path string) bool {
 	if _, err := exec.LookPath("gh"); err != nil {
 		return false
 	}
-	cmd := exec.Command("gh", "pr", "view", "--json", "number")
+	ctx, cancel := context.WithTimeout(context.Background(), 1200*time.Millisecond)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "pr", "view", "--json", "number")
 	cmd.Dir = path
 	out, err := cmd.Output()
 	if err != nil {
@@ -186,6 +209,12 @@ func hasCurrentPR(path string) bool {
 		return false
 	}
 	return payload.Number > 0
+}
+
+func checkPRAvailabilityCmd(path string) tea.Cmd {
+	return func() tea.Msg {
+		return prAvailabilityMsg{available: hasCurrentPR(path)}
+	}
 }
 
 func canOpenShellInITermTab() bool {
