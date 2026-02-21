@@ -103,3 +103,16 @@ Inside the picker:
 ```sh
 go build -o wtx
 ```
+
+## End-to-End Tests
+
+```sh
+make e2e
+```
+
+This builds `./bin/wtx` once and runs E2E scenarios in an isolated `HOME` temp directory.
+
+Useful test env flags:
+- `WTX_DISABLE_TMUX=1` disables tmux integration paths.
+- `WTX_DISABLE_ITERM=1` disables iTerm escape integration.
+- `WTX_TEST_MODE=1` bypasses interactive UI entrypoints with deterministic behavior.

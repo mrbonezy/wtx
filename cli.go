@@ -51,6 +51,15 @@ func newConfigCommand() *cobra.Command {
 		Short: "Open interactive configuration",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if testModeEnabled() {
+				fetch := true
+				return SaveConfig(Config{
+					AgentCommand:          defaultAgentCommand,
+					NewBranchFetchFirst:   &fetch,
+					IDECommand:            defaultIDECommand,
+					MainScreenBranchLimit: defaultMainScreenBranchLimit,
+				})
+			}
 			p := tea.NewProgram(newConfigModel(), tea.WithMouseCellMotion())
 			return p.Start()
 		},
@@ -172,6 +181,10 @@ func newIDEPickerCommand() *cobra.Command {
 }
 
 func runDefault(args []string) error {
+	if testModeEnabled() {
+		fmt.Println("wtx test mode: interactive UI bypassed")
+		return nil
+	}
 	handled, err := ensureFreshTmuxSession(args)
 	if err != nil {
 		return err

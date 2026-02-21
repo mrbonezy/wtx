@@ -356,7 +356,7 @@ func computeOwnerID() string {
 	if explicit := strings.TrimSpace(os.Getenv("WTX_OWNER_ID")); explicit != "" {
 		return "explicit:" + explicit
 	}
-	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
+	if !tmuxIntegrationDisabled() && strings.TrimSpace(os.Getenv("TMUX")) != "" {
 		if sessionID, err := currentSessionID(); err == nil && strings.TrimSpace(sessionID) != "" {
 			if windowID, werr := currentWindowID(); werr == nil && strings.TrimSpace(windowID) != "" {
 				return "tmux:" + sessionID + ":" + windowID

@@ -17,6 +17,9 @@ import (
 const tmuxStatusIntervalSeconds = "10"
 
 func ensureFreshTmuxSession(args []string) (bool, error) {
+	if tmuxIntegrationDisabled() {
+		return false, nil
+	}
 	if strings.TrimSpace(os.Getenv("TMUX")) != "" {
 		return false, nil
 	}
@@ -104,6 +107,9 @@ func resolveSelfBinary(args []string) (string, error) {
 }
 
 func setStartupStatusBanner() {
+	if tmuxIntegrationDisabled() {
+		return
+	}
 	if strings.TrimSpace(os.Getenv("TMUX")) == "" {
 		return
 	}
@@ -125,6 +131,9 @@ func splitCommandPane(worktreePath string, runCmd string) (string, error) {
 }
 
 func tmuxAvailable() bool {
+	if tmuxIntegrationDisabled() {
+		return false
+	}
 	if strings.TrimSpace(os.Getenv("TMUX")) == "" {
 		return false
 	}
@@ -192,6 +201,9 @@ func renderBanner(branch string, path string, ghSummary string) string {
 }
 
 func setStatusBanner(banner string) {
+	if tmuxIntegrationDisabled() {
+		return
+	}
 	if strings.TrimSpace(banner) == "" {
 		return
 	}
@@ -205,6 +217,9 @@ func setStatusBanner(banner string) {
 }
 
 func setDynamicWorktreeStatus(worktreePath string) {
+	if tmuxIntegrationDisabled() {
+		return
+	}
 	worktreePath = strings.TrimSpace(worktreePath)
 	if worktreePath == "" {
 		return
@@ -228,7 +243,9 @@ func setDynamicWorktreeStatus(worktreePath string) {
 }
 
 func clearScreen() {
-	_ = exec.Command("tmux", "clear-history").Run()
+	if tmuxAvailable() {
+		_ = exec.Command("tmux", "clear-history").Run()
+	}
 	fmt.Fprint(os.Stdout, "\x1b[2J\x1b[H")
 }
 
@@ -259,6 +276,9 @@ func shellQuote(value string) string {
 }
 
 func ensureWTXSessionDefaults() {
+	if tmuxIntegrationDisabled() {
+		return
+	}
 	sessionID, err := currentSessionID()
 	if err != nil || strings.TrimSpace(sessionID) == "" {
 		return
