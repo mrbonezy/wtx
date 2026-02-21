@@ -10,6 +10,7 @@ import (
 )
 
 const tmuxStatusGHTTL = 10 * time.Second
+const defaultGHSummary = "PR - | CI - | Review -"
 
 type ghStatusCacheEntry struct {
 	FetchedAtUnix int64  `json:"fetched_at_unix"`
@@ -82,30 +83,47 @@ func currentBranchInWorktree(worktreePath string) string {
 func ghSummaryForBranchCached(worktreePath string, branch string) string {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
-		return "PR - | CI - | Review -"
+		return defaultGHSummary
 	}
 	repoRoot, err := repoRootForDir(worktreePath, "")
 	if err != nil {
-		return "PR - | CI - | Review -"
+		return defaultGHSummary
 	}
 	if summary, ok := readCachedGHSummary(repoRoot, branch); ok {
 		return summary
 	}
-	summary := ghSummaryForRepoBranch(repoRoot, branch)
-	_ = writeCachedGHSummary(repoRoot, branch, summary)
+	summary, reliable := ghSummaryForRepoBranch(repoRoot, branch)
+	if reliable {
+		_ = writeCachedGHSummary(repoRoot, branch, summary)
+		return summary
+	}
+	if summary, ok := readCachedGHSummaryAllowStale(repoRoot, branch); ok {
+		return summary
+	}
 	return summary
 }
 
-func ghSummaryForRepoBranch(repoRoot string, branch string) string {
-	data, _ := NewGHManager().PRDataByBranch(repoRoot, []string{branch})
+func ghSummaryForRepoBranch(repoRoot string, branch string) (string, bool) {
+	data, err := NewGHManager().PRDataByBranch(repoRoot, []string{branch})
+	if err != nil {
+		return defaultGHSummary, false
+	}
 	pr, ok := data[branch]
 	if !ok {
-		return "PR - | CI - | Review -"
+		return defaultGHSummary, true
 	}
-	return "PR " + prLabelWithURL(pr) + " | CI " + ciLabel(pr) + " | Review " + reviewLabel(pr)
+	return "PR " + prLabelWithURL(pr) + " | CI " + ciLabel(pr) + " | Review " + reviewLabel(pr), true
 }
 
 func readCachedGHSummary(repoRoot string, branch string) (string, bool) {
+	return readCachedGHSummaryWithTTL(repoRoot, branch, tmuxStatusGHTTL)
+}
+
+func readCachedGHSummaryAllowStale(repoRoot string, branch string) (string, bool) {
+	return readCachedGHSummaryWithTTL(repoRoot, branch, 0)
+}
+
+func readCachedGHSummaryWithTTL(repoRoot string, branch string, ttl time.Duration) (string, bool) {
 	path, err := ghStatusCachePath(repoRoot, branch)
 	if err != nil {
 		return "", false
@@ -121,7 +139,7 @@ func readCachedGHSummary(repoRoot string, branch string) (string, bool) {
 	if strings.TrimSpace(entry.Summary) == "" || entry.FetchedAtUnix <= 0 {
 		return "", false
 	}
-	if time.Since(time.Unix(entry.FetchedAtUnix, 0)) > tmuxStatusGHTTL {
+	if ttl > 0 && time.Since(time.Unix(entry.FetchedAtUnix, 0)) > ttl {
 		return "", false
 	}
 	return entry.Summary, true

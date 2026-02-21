@@ -156,9 +156,9 @@ func newTmuxAgentExitCommand() *cobra.Command {
 
 func newTmuxActionsCommand() *cobra.Command {
 	return &cobra.Command{
-		Use:    "tmux-actions [path]",
+		Use:    "tmux-actions [path] [action]",
 		Short:  "Open tmux actions popup",
-		Args:   cobra.MaximumNArgs(1),
+		Args:   cobra.MaximumNArgs(2),
 		Hidden: true,
 		RunE: func(_ *cobra.Command, cmdArgs []string) error {
 			return runTmuxActions(cmdArgs)
