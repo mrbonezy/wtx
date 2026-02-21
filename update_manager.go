@@ -156,7 +156,7 @@ func checkForUpdatesWithThrottle(ctx context.Context, currentVersion string, int
 		return updateCheckResult{
 			CurrentVersion:  currentVersion,
 			LatestVersion:   cachedLatest,
-			UpdateAvailable: isUpdateAvailable(currentVersion, cachedLatest),
+			UpdateAvailable: isUpdateAvailableForInstall(currentVersion, cachedLatest),
 		}, nil
 	}
 
@@ -169,7 +169,7 @@ func checkForUpdatesWithThrottle(ctx context.Context, currentVersion string, int
 		return updateCheckResult{
 			CurrentVersion:  currentVersion,
 			LatestVersion:   latest,
-			UpdateAvailable: isUpdateAvailable(currentVersion, latest),
+			UpdateAvailable: isUpdateAvailableForInstall(currentVersion, latest),
 		}, nil
 	}
 	if strings.TrimSpace(cachedLatest) != "" {
@@ -178,7 +178,7 @@ func checkForUpdatesWithThrottle(ctx context.Context, currentVersion string, int
 		return updateCheckResult{
 			CurrentVersion:  currentVersion,
 			LatestVersion:   cachedLatest,
-			UpdateAvailable: isUpdateAvailable(currentVersion, cachedLatest),
+			UpdateAvailable: isUpdateAvailableForInstall(currentVersion, cachedLatest),
 		}, nil
 	}
 	return updateCheckResult{}, err

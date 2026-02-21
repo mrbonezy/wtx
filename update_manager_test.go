@@ -175,3 +175,21 @@ func TestCheckForUpdatesWithThrottle_UsesCacheOnResolveFailure(t *testing.T) {
 		t.Fatalf("expected cached latest version to surface update availability")
 	}
 }
+
+func TestCheckForUpdatesWithThrottle_DevBuildUsesInstallAvailability(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := writeUpdateState(updateState{
+		LastCheckedUnix: time.Now().Unix(),
+		LastSeenVersion: "v0.0.11",
+	}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+
+	result, err := checkForUpdatesWithThrottle(context.Background(), "dev", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.UpdateAvailable {
+		t.Fatalf("expected dev build to be update-available when cached release exists")
+	}
+}

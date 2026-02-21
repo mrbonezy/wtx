@@ -105,3 +105,64 @@ func TestRunVersionFlagChecksLatest(t *testing.T) {
 		t.Fatalf("expected --version to check latest version")
 	}
 }
+
+func TestPromptAndMaybeInstallVersionUpdate_NoSkipsInstall(t *testing.T) {
+	called := false
+	oldInstall := installVersionFn
+	installVersionFn = func(context.Context, string) error {
+		called = true
+		return nil
+	}
+	t.Cleanup(func() {
+		installVersionFn = oldInstall
+	})
+
+	var out bytes.Buffer
+	err := promptAndMaybeInstallVersionUpdate(strings.NewReader("n\n"), &out, updateCheckResult{
+		CurrentVersion:  "v1.0.0",
+		LatestVersion:   "v1.1.0",
+		UpdateAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("promptAndMaybeInstallVersionUpdate no: %v", err)
+	}
+	if called {
+		t.Fatalf("expected install not to be called")
+	}
+	if !strings.Contains(out.String(), "Skipped update.") {
+		t.Fatalf("expected skipped message, got %q", out.String())
+	}
+}
+
+func TestPromptAndMaybeInstallVersionUpdate_YesInstalls(t *testing.T) {
+	called := false
+	var installed string
+	oldInstall := installVersionFn
+	installVersionFn = func(_ context.Context, target string) error {
+		called = true
+		installed = target
+		return nil
+	}
+	t.Cleanup(func() {
+		installVersionFn = oldInstall
+	})
+
+	var out bytes.Buffer
+	err := promptAndMaybeInstallVersionUpdate(strings.NewReader("yes\n"), &out, updateCheckResult{
+		CurrentVersion:  "v1.0.0",
+		LatestVersion:   "v1.1.0",
+		UpdateAvailable: true,
+	})
+	if err != nil {
+		t.Fatalf("promptAndMaybeInstallVersionUpdate yes: %v", err)
+	}
+	if !called {
+		t.Fatalf("expected install to be called")
+	}
+	if installed != "v1.1.0" {
+		t.Fatalf("expected target v1.1.0, got %q", installed)
+	}
+	if !strings.Contains(out.String(), "Updated wtx to v1.1.0") {
+		t.Fatalf("expected updated message, got %q", out.String())
+	}
+}

@@ -1,14 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
+
+var installVersionFn = installVersion
 
 func newRootCommand(args []string) *cobra.Command {
 	var showVersion bool
@@ -268,10 +272,51 @@ func runVersionCommand() error {
 		fmt.Fprintf(os.Stderr, "wtx version check: %v\n", err)
 		return nil
 	}
-	printUpdateCheckResultTo(os.Stderr, updateCheckResult{
+	result := updateCheckResult{
 		CurrentVersion:  cur,
 		LatestVersion:   latest,
 		UpdateAvailable: isUpdateAvailableForInstall(cur, latest),
-	}, false)
+	}
+	printUpdateCheckResultTo(os.Stderr, result, false)
+	if !result.UpdateAvailable || !isInteractiveTerminal(os.Stdin) || !isInteractiveTerminal(os.Stdout) {
+		return nil
+	}
+	return promptAndMaybeInstallVersionUpdate(os.Stdin, os.Stdout, result)
+}
+
+func promptAndMaybeInstallVersionUpdate(r io.Reader, w io.Writer, result updateCheckResult) error {
+	if !result.UpdateAvailable {
+		return nil
+	}
+	fmt.Fprint(w, "Do you want to update now? [y/N]: ")
+	reader := bufio.NewReader(r)
+	answer, err := reader.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return err
+	}
+	answer = strings.TrimSpace(strings.ToLower(answer))
+	if answer != "y" && answer != "yes" {
+		fmt.Fprintln(w, "Skipped update.")
+		return nil
+	}
+
+	fmt.Fprintf(w, "Updating wtx to %s...\n", result.LatestVersion)
+	installCtx, installCancel := context.WithTimeout(context.Background(), installUpdateTimeout)
+	defer installCancel()
+	if err := installVersionFn(installCtx, result.LatestVersion); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "Updated wtx to %s\n", result.LatestVersion)
 	return nil
+}
+
+func isInteractiveTerminal(f *os.File) bool {
+	if f == nil {
+		return false
+	}
+	info, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	return info.Mode()&os.ModeCharDevice != 0
 }
