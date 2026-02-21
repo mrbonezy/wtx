@@ -26,6 +26,9 @@ func setITermWTXBranchTab(branch string) {
 }
 
 func setITermTab(title string) {
+	if iTermIntegrationDisabled() {
+		return
+	}
 	inTmux := strings.TrimSpace(os.Getenv("TMUX")) != ""
 	if !inTmux && strings.TrimSpace(os.Getenv("TERM_PROGRAM")) != "iTerm.app" {
 		return
@@ -50,6 +53,9 @@ func setITermTab(title string) {
 }
 
 func resetITermTabColor() {
+	if iTermIntegrationDisabled() {
+		return
+	}
 	inTmux := strings.TrimSpace(os.Getenv("TMUX")) != ""
 	if !inTmux && strings.TrimSpace(os.Getenv("TERM_PROGRAM")) != "iTerm.app" {
 		return
