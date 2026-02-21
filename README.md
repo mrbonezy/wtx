@@ -34,6 +34,7 @@ Direct checkout flow (same worktree selection behavior as interactive mode):
 ```sh
 wtx checkout <existing_branch>
 wtx co <existing_branch>
+wtx pr <pr_number>
 ```
 
 Create a new branch:
@@ -61,6 +62,15 @@ Configure defaults:
 wtx config
 ```
 
+Install zsh completion (aliases optional):
+
+```sh
+wtx completion install
+wtx completion install --aliases
+wtx completion aliases install
+wtx completion aliases remove
+```
+
 Inside the picker:
 - `enter`: actions for selected free worktree
 - `s`: open shell in selected free worktree
@@ -84,7 +94,9 @@ Inside the picker:
 - Branch list filtering + recently-used ordering
 - Configurable main-screen branch list size (`wtx config`, default `10`)
 - Non-interactive checkout (`wtx checkout` / `wtx co`)
+- PR teleport (`wtx pr <number>`)
 - Zsh completion status + installer (`wtx completion status`, `wtx completion install`)
+- Optional managed zsh aliases (`wco`, `wpr`)
 - Live local status polling in the root menu (`1s`)
 - GitHub integration (if `gh` is installed):
   - PR link

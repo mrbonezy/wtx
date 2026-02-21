@@ -230,9 +230,6 @@ func (m configModel) renderZshCompletionStatus() string {
 	if m.zshErr != "" {
 		return fmt.Sprintf("Zsh completion: %s\n", errorStyle.Render("unavailable: "+m.zshErr))
 	}
-	if m.zshStatus.Installed && m.zshStatus.Enabled {
-		return "Zsh completion: installed and enabled\n"
-	}
 	parts := make([]string, 0, 2)
 	if !m.zshStatus.Installed {
 		parts = append(parts, "not installed")
@@ -240,5 +237,20 @@ func (m configModel) renderZshCompletionStatus() string {
 	if !m.zshStatus.Enabled {
 		parts = append(parts, "not enabled")
 	}
-	return fmt.Sprintf("Zsh completion: %s\nInstall with: wtx completion install\n", strings.Join(parts, ", "))
+	completionLine := "Zsh completion: installed and enabled"
+	if len(parts) > 0 {
+		completionLine = fmt.Sprintf("Zsh completion: %s", strings.Join(parts, ", "))
+	}
+	aliasesLine := "Zsh aliases: installed and enabled"
+	if !m.zshStatus.AliasesEnabled {
+		aliasesLine = "Zsh aliases: not enabled (optional)"
+	}
+	helpLines := ""
+	if !m.zshStatus.Installed || !m.zshStatus.Enabled {
+		helpLines += "Install completion with: wtx completion install\n"
+	}
+	if !m.zshStatus.AliasesEnabled {
+		helpLines += "Install aliases with: wtx completion aliases install\n"
+	}
+	return completionLine + "\n" + aliasesLine + "\n" + helpLines
 }
