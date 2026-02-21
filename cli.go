@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -17,13 +19,12 @@ func newRootCommand(args []string) *cobra.Command {
 		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if showVersion {
-				fmt.Println(currentVersion())
-				return nil
+				return runVersionCommand()
 			}
 			return runDefault(args)
 		},
 	}
-	root.Flags().BoolVar(&showVersion, "version", false, "Print wtx version and exit")
+	root.Flags().BoolVarP(&showVersion, "version", "v", false, "Print wtx version and exit")
 
 	root.AddCommand(
 		newCheckoutCommand(),
@@ -239,5 +240,25 @@ func runDefault(args []string) error {
 			}
 		}
 	}
+	return nil
+}
+
+func runVersionCommand() error {
+	cur := currentVersion()
+	fmt.Println(cur)
+
+	ctx, cancel := context.WithTimeout(context.Background(), resolveUpdateTimeout)
+	defer cancel()
+
+	latest, err := resolveLatestVersionFn(ctx)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "wtx version check: %v\n", err)
+		return nil
+	}
+	printUpdateCheckResultTo(os.Stderr, updateCheckResult{
+		CurrentVersion:  cur,
+		LatestVersion:   latest,
+		UpdateAvailable: isUpdateAvailableForInstall(cur, latest),
+	}, false)
 	return nil
 }
