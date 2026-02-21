@@ -254,10 +254,15 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	}
 	cmd := "#(" + shellQuote(bin) + " tmux-status --worktree " + shellQuote(worktreePath) + ")"
 	configureTmuxStatus(sessionID, "300", tmuxStatusIntervalSeconds)
+	_ = exec.Command("tmux", "set-environment", "-t", sessionID, "WTX_WORKTREE_PATH", worktreePath).Run()
+	tmuxSetOption(sessionID, "@wtx_worktree_path", worktreePath)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
+	tmuxSetOption(sessionID, "status-right", " ^A actions | ^S split | ^P PR | ^L IDE#{?#{>:#{window_panes},1}, | ⌥↑/⌥↓ move | ⌥⇧↑/⌥⇧↓ resize,} ")
+	tmuxSetOption(sessionID, "status-right-length", "132")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
 	tmuxSetOption(sessionID, "set-titles-string", titleCmd)
+	configureTmuxActionBindings(sessionID, resolveAgentLifecycleBinary())
 }
 
 func clearScreen() {
@@ -317,6 +322,8 @@ func ensureWTXSessionDefaults() {
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-S-Up").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-S-Down").Run()
 	// Only resize when split panes are present.
+	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-Up", "if-shell", "-F", "#{>:#{window_panes},1}", "select-pane -U").Run()
+	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-Down", "if-shell", "-F", "#{>:#{window_panes},1}", "select-pane -D").Run()
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-S-Up", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -U 3").Run()
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-S-Down", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -D 3").Run()
 	// Preserve modified key chords (for example Shift+Enter in coding agents) inside wtx-managed tmux sessions.
@@ -327,17 +334,30 @@ func ensureWTXSessionDefaults() {
 	tmuxAppendServerOption("terminal-features", ",*:extkeys")
 	tmuxAppendGlobalOption("terminal-features", ",*:extkeys")
 
-	// Replace direct Ctrl shortcuts with a single actions popup.
+	// Keep direct shortcuts while also offering a single actions popup.
 	_ = exec.Command("tmux", "unbind-key", "-n", "C-s").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "C-a").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "C-p").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "C-l").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-a").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-A").Run()
-	wtxBin := resolveAgentLifecycleBinary()
-	if strings.TrimSpace(wtxBin) != "" {
-		actionsPopupCmd := tmuxActionsPopupCommand(wtxBin)
-		_ = exec.Command("tmux", "bind-key", "-n", "C-a", "popup", "-E", "-w", "60", "-h", "20", actionsPopupCmd).Run()
+	configureTmuxActionBindings(sessionID, resolveAgentLifecycleBinary())
+}
+
+func configureTmuxActionBindings(sessionID string, wtxBin string) {
+	_ = sessionID
+	if strings.TrimSpace(wtxBin) == "" {
+		return
 	}
+	actionsPopupCmd := tmuxActionsPopupCommand(wtxBin)
+	splitCmd := tmuxActionsCommandWithAction(wtxBin, tmuxActionShellSplit)
+	prCmd := tmuxActionsCommandWithAction(wtxBin, tmuxActionPR)
+	ideCmd := tmuxActionsCommandWithAction(wtxBin, tmuxActionIDE)
+
+	_ = exec.Command("tmux", "bind-key", "-n", "C-a", "popup", "-E", "-w", "60", "-h", "20", actionsPopupCmd).Run()
+	_ = exec.Command("tmux", "bind-key", "-n", "C-s", "run-shell", splitCmd).Run()
+	_ = exec.Command("tmux", "bind-key", "-n", "C-p", "run-shell", prCmd).Run()
+	_ = exec.Command("tmux", "bind-key", "-n", "C-l", "popup", "-E", "-w", "60", "-h", "20", ideCmd).Run()
 }
 
 func configureTmuxStatus(sessionID string, leftLength string, interval string) {
