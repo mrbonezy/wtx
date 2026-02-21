@@ -458,7 +458,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 							return m, nil
 						}
 						m.errMsg = ""
-						return m, createOpenWorktreeCmd(m.mgr, branch, m.status.BaseRef)
+						return m, createOpenWorktreeCmd(m.mgr, branch, resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef))
 					case "esc":
 						m.openDebugCreating = false
 						m.newBranchInput.Blur()
@@ -621,13 +621,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			case "enter":
 				if m.openSelected == 0 {
-					defaultBase := strings.TrimSpace(m.openDefaultBaseRef)
-					if defaultBase == "" {
-						defaultBase = strings.TrimSpace(m.status.BaseRef)
-					}
-					if defaultBase == "" {
-						defaultBase = "origin/main"
-					}
+					defaultBase := resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef)
 					branch := ""
 					baseRef := defaultBase
 					fetch := m.openDefaultFetch
@@ -735,7 +729,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						m.errMsg = err.Error()
 						return m, nil
 					}
-					if err := m.mgr.CheckoutNewBranch(row.Path, branch, m.status.BaseRef, false); err != nil {
+					if err := m.mgr.CheckoutNewBranch(row.Path, branch, resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef), m.openDefaultFetch); err != nil {
 						lock.Release()
 						m.errMsg = err.Error()
 						return m, nil
@@ -750,7 +744,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				m.mode = modeCreating
 				m.creatingBranch = branch
-				m.creatingBaseRef = m.status.BaseRef
+				m.creatingBaseRef = resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef)
 				m.creatingExisting = false
 				m.creatingStartedAt = time.Now()
 				m.newBranchInput.Blur()
@@ -758,7 +752,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.errMsg = ""
 				return m, tea.Batch(
 					m.spinner.Tick,
-					createWorktreeCmd(m.mgr, branch, m.status.BaseRef),
+					createWorktreeCmd(m.mgr, branch, resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef)),
 				)
 			}
 			var cmd tea.Cmd
@@ -779,7 +773,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			case "down", "j":
-				if m.actionIndex < len(currentActionItems(m.actionBranch, m.status.BaseRef, m.actionCreate))-1 {
+				if m.actionIndex < len(currentActionItems(m.actionBranch, resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef), m.actionCreate))-1 {
 					m.actionIndex++
 				}
 				return m, nil
@@ -1359,7 +1353,7 @@ func (m model) View() string {
 			title = "New worktree actions:"
 		}
 		b.WriteString(title + "\n")
-		for i, item := range currentActionItems(m.actionBranch, m.status.BaseRef, m.actionCreate) {
+		for i, item := range currentActionItems(m.actionBranch, resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef), m.actionCreate) {
 			line := "  " + actionNormalStyle.Render(item)
 			if i == m.actionIndex {
 				line = "  " + actionSelectedStyle.Render(item)
@@ -1486,7 +1480,7 @@ func renderCreateProgress(m model) string {
 	}
 	base := strings.TrimSpace(m.creatingBaseRef)
 	if base == "" {
-		base = strings.TrimSpace(m.status.BaseRef)
+		base = resolveNewBranchBaseRef(m.openDefaultBaseRef, m.status.BaseRef)
 	}
 	if base != "" {
 		return fmt.Sprintf("Provisioning %s from %s%s...", branchStyle.Render(branch), branchInlineStyle.Render(base), elapsed)
