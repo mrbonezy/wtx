@@ -124,6 +124,12 @@ make e2e
 
 This builds `./bin/wtx` once and runs E2E scenarios in an isolated `HOME` temp directory.
 
+```sh
+make local-e2e
+```
+
+`local-e2e` runs additional local-only scenarios (build tag `local_e2e`) that exercise real git fetch/checkout behavior on an isolated temporary repository (no GitHub mocking and no use of this repository as test data).
+
 Useful test env flags:
 - `WTX_DISABLE_TMUX=1` disables tmux integration paths.
 - `WTX_DISABLE_ITERM=1` disables iTerm escape integration.
