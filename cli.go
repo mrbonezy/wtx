@@ -300,9 +300,10 @@ func promptAndMaybeInstallVersionUpdate(r io.Reader, w io.Writer, result updateC
 		return nil
 	}
 
-	fmt.Fprintf(w, "Updating wtx to %s...\n", result.LatestVersion)
 	installCtx, installCancel := context.WithTimeout(context.Background(), installUpdateTimeout)
 	defer installCancel()
+	stopSpinner := startDelayedSpinner(fmt.Sprintf("Updating wtx to %s...", result.LatestVersion), 0)
+	defer stopSpinner()
 	if err := installVersionFn(installCtx, result.LatestVersion); err != nil {
 		return err
 	}
