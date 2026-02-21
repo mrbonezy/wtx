@@ -15,6 +15,7 @@ import (
 )
 
 const tmuxStatusIntervalSeconds = "10"
+const tmuxStatusRightHint = " ^A actions#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} "
 
 func ensureFreshTmuxSession(args []string) (bool, error) {
 	if tmuxIntegrationDisabled() {
@@ -229,6 +230,7 @@ func setStatusBanner(banner string) {
 	if err != nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	ensureWTXSessionDefaults()
 	configureTmuxStatus(sessionID, "200", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+banner+" ")
 }
@@ -245,6 +247,7 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	if err != nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	ensureWTXSessionDefaults()
 	bin := resolveStatusCommandBinary()
 	if strings.TrimSpace(bin) == "" {
 		return
@@ -252,8 +255,6 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	cmd := "#(" + shellQuote(bin) + " tmux-status --worktree " + shellQuote(worktreePath) + ")"
 	configureTmuxStatus(sessionID, "300", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
-	tmuxSetOption(sessionID, "status-right", " ^A actions#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} ")
-	tmuxSetOption(sessionID, "status-right-length", "64")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
 	tmuxSetOption(sessionID, "set-titles-string", titleCmd)
@@ -310,6 +311,11 @@ func ensureWTXSessionDefaults() {
 	// Stop hijacking Option+Left/Right so editor navigation keeps working.
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-Left").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-Right").Run()
+	// Remove legacy resize bindings so resize only happens on Option+Shift+Up/Down.
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-Up").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-Down").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-S-Up").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-S-Down").Run()
 	// Only resize when split panes are present.
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-S-Up", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -U 3").Run()
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-S-Down", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -D 3").Run()
@@ -340,7 +346,8 @@ func configureTmuxStatus(sessionID string, leftLength string, interval string) {
 	tmuxSetOption(sessionID, "status-justify", "left")
 	tmuxSetOption(sessionID, "status-style", "fg=#d0d0d0,bg=#3d2a5c")
 	tmuxSetOption(sessionID, "status-left-length", leftLength)
-	tmuxSetOption(sessionID, "status-right", "")
+	tmuxSetOption(sessionID, "status-right", tmuxStatusRightHint)
+	tmuxSetOption(sessionID, "status-right-length", "64")
 	interval = strings.TrimSpace(interval)
 	if interval == "" {
 		interval = tmuxStatusIntervalSeconds

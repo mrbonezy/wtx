@@ -36,6 +36,7 @@ type model struct {
 	forceGHRefresh        bool
 	ghWarnMsg             string
 	updateHint            string
+	updateHintIsError     bool
 	errMsg                string
 	warnMsg               string
 	creatingBranch        string
@@ -208,6 +209,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case interactiveUpdateHintMsg:
 		m.updateHint = strings.TrimSpace(msg.hint)
+		m.updateHintIsError = msg.isError
 		return m, nil
 	case openScreenLoadedMsg:
 		m.ready = true
@@ -1438,7 +1440,7 @@ func (m model) View() string {
 		b.WriteString("\n")
 	}
 	if m.updateHint != "" {
-		b.WriteString(warnStyle.Render(m.updateHint))
+		b.WriteString(renderUpdateHint(m.updateHint, m.updateHintIsError))
 		b.WriteString("\n")
 	}
 	if len(m.status.Malformed) > 0 {
@@ -1796,9 +1798,17 @@ var (
 	branchStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
 	branchInlineStyle   = lipgloss.NewStyle().Bold(true)
 	warnStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	updateHintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
 	inputStyle          = lipgloss.NewStyle().
 				Padding(0, 1)
 )
+
+func renderUpdateHint(hint string, isError bool) string {
+	if isError {
+		return errorStyle.Render(hint)
+	}
+	return updateHintStyle.Render(hint)
+}
 
 func viewStyles() uiview.Styles {
 	return uiview.Styles{

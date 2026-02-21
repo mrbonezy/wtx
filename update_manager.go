@@ -18,7 +18,7 @@ import (
 const (
 	updateRepoModule       = "github.com/mrbonezy/wtx"
 	updateRepoGitURL       = "https://github.com/mrbonezy/wtx.git"
-	defaultUpdateInterval  = 24 * time.Hour
+	defaultUpdateInterval  = 10 * time.Minute
 	startupUpdateTimeout   = 3 * time.Second
 	resolveUpdateTimeout   = 8 * time.Second
 	installUpdateTimeout   = 2 * time.Minute
@@ -44,6 +44,7 @@ type updateCheckResult struct {
 	CurrentVersion  string
 	LatestVersion   string
 	UpdateAvailable bool
+	ResolveError    string
 }
 
 func runUpdateCommand(checkOnly bool, quiet bool) error {
@@ -76,12 +77,13 @@ func runUpdateCommand(checkOnly bool, quiet bool) error {
 		return nil
 	}
 
-	if !quiet {
-		fmt.Printf("Updating wtx to %s...\n", result.LatestVersion)
-	}
-
 	installCtx, installCancel := context.WithTimeout(context.Background(), installUpdateTimeout)
 	defer installCancel()
+	stopSpinner := func() {}
+	if !quiet {
+		stopSpinner = startDelayedSpinner(fmt.Sprintf("Updating wtx to %s...", result.LatestVersion), 0)
+	}
+	defer stopSpinner()
 	if err := installVersion(installCtx, result.LatestVersion); err != nil {
 		return err
 	}
@@ -179,6 +181,7 @@ func checkForUpdatesWithThrottle(ctx context.Context, currentVersion string, int
 			CurrentVersion:  currentVersion,
 			LatestVersion:   cachedLatest,
 			UpdateAvailable: isUpdateAvailableForInstall(currentVersion, cachedLatest),
+			ResolveError:    err.Error(),
 		}, nil
 	}
 	return updateCheckResult{}, err

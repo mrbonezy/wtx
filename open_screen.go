@@ -289,7 +289,7 @@ func renderOpenScreen(m model) string {
 		}
 		if m.updateHint != "" {
 			b.WriteString("\n")
-			b.WriteString(warnStyle.Render(m.updateHint))
+			b.WriteString(renderUpdateHint(m.updateHint, m.updateHintIsError))
 			b.WriteString("\n")
 		}
 		b.WriteString("\nUse up/down to select. d delete selected (with confirm). u unlock selected (with confirm). n new worktree.\n")
@@ -316,7 +316,7 @@ func renderOpenScreen(m model) string {
 		}
 		if m.updateHint != "" {
 			b.WriteString("\n")
-			b.WriteString(warnStyle.Render(m.updateHint))
+			b.WriteString(renderUpdateHint(m.updateHint, m.updateHintIsError))
 			b.WriteString("\n")
 		}
 		return b.String()
@@ -359,7 +359,7 @@ func renderOpenScreen(m model) string {
 		}
 		if m.updateHint != "" {
 			b.WriteString("\n")
-			b.WriteString(warnStyle.Render(m.updateHint))
+			b.WriteString(renderUpdateHint(m.updateHint, m.updateHintIsError))
 			b.WriteString("\n")
 		}
 		b.WriteString("\nUse up/down to choose, enter to select. Esc goes back. Ctrl+R refreshes (auto-refresh every 2s).\n")
@@ -435,7 +435,7 @@ func renderOpenScreen(m model) string {
 	}
 	if m.updateHint != "" {
 		b.WriteString("\n")
-		b.WriteString(warnStyle.Render(m.updateHint))
+		b.WriteString(renderUpdateHint(m.updateHint, m.updateHintIsError))
 		b.WriteString("\n")
 	}
 
