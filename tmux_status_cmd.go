@@ -10,7 +10,8 @@ import (
 )
 
 const tmuxStatusGHTTL = 10 * time.Second
-const defaultGHSummary = "PR - | CI - | Review -"
+const tmuxStatusGHStaleMaxAge = 2 * time.Minute
+const defaultGHSummary = "PR - | CI - | GH - | Review -"
 
 type ghStatusCacheEntry struct {
 	FetchedAtUnix int64  `json:"fetched_at_unix"`
@@ -112,7 +113,7 @@ func ghSummaryForRepoBranch(repoRoot string, branch string) (string, bool) {
 	if !ok {
 		return defaultGHSummary, true
 	}
-	return "PR " + prLabelWithURL(pr) + " | CI " + ciLabel(pr) + " | Review " + reviewLabel(pr), true
+	return "PR " + prLabelWithURL(pr) + " | CI " + ciLabel(pr) + " | GH " + ghAPIStatusLabel(pr) + " | Review " + reviewLabel(pr), true
 }
 
 func readCachedGHSummary(repoRoot string, branch string) (string, bool) {
@@ -120,7 +121,7 @@ func readCachedGHSummary(repoRoot string, branch string) (string, bool) {
 }
 
 func readCachedGHSummaryAllowStale(repoRoot string, branch string) (string, bool) {
-	return readCachedGHSummaryWithTTL(repoRoot, branch, 0)
+	return readCachedGHSummaryWithTTL(repoRoot, branch, tmuxStatusGHStaleMaxAge)
 }
 
 func readCachedGHSummaryWithTTL(repoRoot string, branch string, ttl time.Duration) (string, bool) {
@@ -181,13 +182,7 @@ func prLabel(pr PRData) string {
 	if pr.Number <= 0 {
 		return "-"
 	}
-	status := strings.TrimSpace(strings.ToLower(pr.Status))
-	switch status {
-	case "open", "closed", "merged":
-		return fmt.Sprintf("#%d(%s)", pr.Number, status)
-	default:
-		return fmt.Sprintf("#%d", pr.Number)
-	}
+	return fmt.Sprintf("#%d", pr.Number)
 }
 
 func prLabelWithURL(pr PRData) string {
@@ -229,4 +224,30 @@ func reviewLabel(pr PRData) string {
 		prefix = "approved"
 	}
 	return fmt.Sprintf("%s u:%d", prefix, pr.UnresolvedComments)
+}
+
+func ghAPIStatusLabel(pr PRData) string {
+	status := strings.TrimSpace(strings.ToLower(pr.Status))
+	switch status {
+	case "conflict":
+		return "conflict"
+	case "awaiting-ci":
+		return "waiting for checks"
+	case "awaiting-review":
+		return "awaiting approval"
+	case "can-merge":
+		return "mergeable"
+	case "awaiting-comments":
+		return "awaiting comments"
+	case "draft":
+		return "draft"
+	case "open":
+		return "open"
+	case "closed":
+		return "closed"
+	case "merged":
+		return "merged"
+	default:
+		return "-"
+	}
 }

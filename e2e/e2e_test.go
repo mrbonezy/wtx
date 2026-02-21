@@ -390,7 +390,7 @@ func TestTmuxStatusWithoutGHFallsBack(t *testing.T) {
 	if result.err != nil {
 		t.Fatalf("tmux-status without gh failed: %v\n%s", result.err, result.out)
 	}
-	assertContains(t, result.out, "PR - | CI - | Review -")
+	assertContains(t, result.out, "PR - | CI - | GH - | Review -")
 }
 
 func TestDisableTmuxSkipsTmuxBinaryUsage(t *testing.T) {

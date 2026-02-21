@@ -101,6 +101,7 @@ Inside the picker:
 - GitHub integration (if `gh` is installed):
   - PR link
   - CI status and progress
+  - mergeability status (`conflict`, `waiting for checks`, `awaiting approval`, `mergeable`)
   - review summary
 - Tmux integration:
   - auto-starts inside a fresh tmux session when launched outside tmux
