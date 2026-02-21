@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,6 +27,7 @@ const (
 )
 
 var releaseVersionPattern = regexp.MustCompile(`^v(\d+)\.(\d+)\.(\d+)$`)
+var resolveLatestVersionFn = resolveLatestVersion
 
 type parsedVersion struct {
 	Major int
@@ -48,7 +50,7 @@ func runUpdateCommand(checkOnly bool, quiet bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), resolveUpdateTimeout)
 	defer cancel()
 
-	latest, err := resolveLatestVersion(ctx)
+	latest, err := resolveLatestVersionFn(ctx)
 	if err != nil {
 		return err
 	}
@@ -93,20 +95,24 @@ func runUpdateCommand(checkOnly bool, quiet bool) error {
 }
 
 func printUpdateCheckResult(result updateCheckResult, quiet bool) {
+	printUpdateCheckResultTo(os.Stdout, result, quiet)
+}
+
+func printUpdateCheckResultTo(w io.Writer, result updateCheckResult, quiet bool) {
 	if quiet {
 		if result.UpdateAvailable {
-			fmt.Println(result.LatestVersion)
+			fmt.Fprintln(w, result.LatestVersion)
 			return
 		}
-		fmt.Println("up_to_date")
+		fmt.Fprintln(w, "up_to_date")
 		return
 	}
 
 	if result.UpdateAvailable {
-		fmt.Printf("Update available: wtx %s -> %s\n", result.CurrentVersion, result.LatestVersion)
+		fmt.Fprintf(w, "Update available: wtx %s -> %s\n", result.CurrentVersion, result.LatestVersion)
 		return
 	}
-	fmt.Printf("wtx is up to date (%s)\n", result.CurrentVersion)
+	fmt.Fprintf(w, "wtx is up to date (%s)\n", result.CurrentVersion)
 }
 
 func maybeStartInvocationUpdateCheck(args []string) {
@@ -134,7 +140,7 @@ func shouldRunInvocationUpdateCheck(args []string) bool {
 		return true
 	}
 	switch name {
-	case "tmux-status", "tmux-title", "tmux-agent-start", "tmux-agent-exit", "completion", "__complete", "__completeNoDesc", "update":
+	case "-v", "--version", "tmux-status", "tmux-title", "tmux-agent-start", "tmux-agent-exit", "completion", "__complete", "__completeNoDesc", "update":
 		return false
 	default:
 		return true
@@ -154,28 +160,28 @@ func checkForUpdatesWithThrottle(ctx context.Context, currentVersion string, int
 		}, nil
 	}
 
-	latest, err := resolveLatestVersion(ctx)
-	state.LastCheckedUnix = now.Unix()
+	latest, err := resolveLatestVersionFn(ctx)
 	if err == nil {
+		state.LastCheckedUnix = now.Unix()
 		state.LastSeenVersion = latest
 		cachedLatest = latest
+		_ = writeUpdateState(state)
+		return updateCheckResult{
+			CurrentVersion:  currentVersion,
+			LatestVersion:   latest,
+			UpdateAvailable: isUpdateAvailable(currentVersion, latest),
+		}, nil
 	}
-	_ = writeUpdateState(state)
-	if err != nil {
-		if strings.TrimSpace(cachedLatest) != "" {
-			return updateCheckResult{
-				CurrentVersion:  currentVersion,
-				LatestVersion:   cachedLatest,
-				UpdateAvailable: isUpdateAvailable(currentVersion, cachedLatest),
-			}, nil
-		}
-		return updateCheckResult{}, err
+	if strings.TrimSpace(cachedLatest) != "" {
+		state.LastCheckedUnix = now.Unix()
+		_ = writeUpdateState(state)
+		return updateCheckResult{
+			CurrentVersion:  currentVersion,
+			LatestVersion:   cachedLatest,
+			UpdateAvailable: isUpdateAvailable(currentVersion, cachedLatest),
+		}, nil
 	}
-	return updateCheckResult{
-		CurrentVersion:  currentVersion,
-		LatestVersion:   latest,
-		UpdateAvailable: isUpdateAvailable(currentVersion, latest),
-	}, nil
+	return updateCheckResult{}, err
 }
 
 func shouldCheckForUpdates(lastCheckedUnix int64, now time.Time, interval time.Duration) bool {

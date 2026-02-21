@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"errors"
+	"os"
 	"testing"
 	"time"
 )
@@ -90,6 +93,8 @@ func TestShouldRunInvocationUpdateCheck(t *testing.T) {
 		{name: "completion", args: []string{"wtx", "completion"}, want: false},
 		{name: "internal helper", args: []string{"wtx", "tmux-status"}, want: false},
 		{name: "update command", args: []string{"wtx", "update"}, want: false},
+		{name: "version long flag", args: []string{"wtx", "--version"}, want: false},
+		{name: "version short flag", args: []string{"wtx", "-v"}, want: false},
 	}
 
 	for _, tc := range tests {
@@ -121,5 +126,52 @@ func TestShouldCheckForUpdates(t *testing.T) {
 	}
 	if !shouldCheckForUpdates(now.Unix()-int64(25*time.Hour/time.Second), now, 24*time.Hour) {
 		t.Fatalf("expected stale check to run")
+	}
+}
+
+func TestCheckForUpdatesWithThrottle_FailedResolveWithoutCacheDoesNotThrottle(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+
+	oldResolve := resolveLatestVersionFn
+	resolveLatestVersionFn = func(context.Context) (string, error) {
+		return "", errors.New("network down")
+	}
+	t.Cleanup(func() {
+		resolveLatestVersionFn = oldResolve
+	})
+
+	if _, err := checkForUpdatesWithThrottle(context.Background(), "v0.0.10", 24*time.Hour); err == nil {
+		t.Fatalf("expected resolver failure")
+	}
+
+	statePath, err := updateStatePath()
+	if err != nil {
+		t.Fatalf("state path: %v", err)
+	}
+	if _, err := os.Stat(statePath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("expected no state file after failed resolve without cache, got: %v", err)
+	}
+}
+
+func TestCheckForUpdatesWithThrottle_UsesCacheOnResolveFailure(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	if err := writeUpdateState(updateState{LastSeenVersion: "v0.0.11"}); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+
+	oldResolve := resolveLatestVersionFn
+	resolveLatestVersionFn = func(context.Context) (string, error) {
+		return "", errors.New("network down")
+	}
+	t.Cleanup(func() {
+		resolveLatestVersionFn = oldResolve
+	})
+
+	result, err := checkForUpdatesWithThrottle(context.Background(), "v0.0.10", 0)
+	if err != nil {
+		t.Fatalf("unexpected error with cache: %v", err)
+	}
+	if !result.UpdateAvailable {
+		t.Fatalf("expected cached latest version to surface update availability")
 	}
 }
