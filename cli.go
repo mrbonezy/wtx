@@ -36,6 +36,7 @@ func newRootCommand(args []string) *cobra.Command {
 		newTmuxTitleCommand(),
 		newTmuxAgentStartCommand(),
 		newTmuxAgentExitCommand(),
+		newTmuxActionsCommand(),
 		newShellCommand(),
 		newIDECommand(),
 		newIDEPickerCommand(),
@@ -147,6 +148,18 @@ func newTmuxAgentExitCommand() *cobra.Command {
 	cmd.Flags().StringVar(&worktree, "worktree", "", "Worktree path")
 	cmd.Flags().IntVar(&code, "code", 0, "Agent exit code")
 	return cmd
+}
+
+func newTmuxActionsCommand() *cobra.Command {
+	return &cobra.Command{
+		Use:    "tmux-actions [path]",
+		Short:  "Open tmux actions popup",
+		Args:   cobra.MaximumNArgs(1),
+		Hidden: true,
+		RunE: func(_ *cobra.Command, cmdArgs []string) error {
+			return runTmuxActions(cmdArgs)
+		},
+	}
 }
 
 func newShellCommand() *cobra.Command {
