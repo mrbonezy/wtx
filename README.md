@@ -29,6 +29,20 @@ wtx init
 wtx
 ```
 
+Direct checkout flow (same worktree selection behavior as interactive mode):
+
+```sh
+wtx checkout <existing_branch>
+wtx co <existing_branch>
+```
+
+Create a new branch:
+
+```sh
+wtx checkout -b <new_branch>
+wtx checkout -b <new_branch> --from origin/main --fetch
+```
+
 Configure defaults:
 
 ```sh
@@ -57,6 +71,8 @@ Inside the picker:
 - Orphaned worktree detection and disabled selection
 - Branch list filtering + recently-used ordering
 - Configurable main-screen branch list size (`wtx config`, default `10`)
+- Non-interactive checkout (`wtx checkout` / `wtx co`)
+- Zsh completion status + installer (`wtx completion status`, `wtx completion install`)
 - Live local status polling in the root menu (`1s`)
 - GitHub integration (if `gh` is installed):
   - PR link

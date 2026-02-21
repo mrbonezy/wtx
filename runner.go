@@ -143,6 +143,7 @@ func commandToRunInTmux(worktreePath string, openShell bool, runCmd string) stri
 
 func activateWorktreeUI(worktreePath string, branch string) {
 	clearScreen()
+	recordRecentBranchForWorktree(worktreePath, branch)
 	if tmuxAvailable() {
 		setDynamicWorktreeStatus(worktreePath)
 		// Avoid overriding tmux-managed dynamic titles with a static branch title.

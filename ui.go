@@ -1314,12 +1314,7 @@ func (m model) View() string {
 	var b strings.Builder
 	showTopBar := m.ready && m.status.InRepo && m.mode == modeList
 	if showTopBar {
-		b.WriteString(bannerStyle.Render("WTX"))
-		b.WriteString("  ")
 		b.WriteString(renderViewHeader())
-		b.WriteString("\n\n")
-	} else {
-		b.WriteString(bannerStyle.Render("WTX"))
 		b.WriteString("\n\n")
 	}
 

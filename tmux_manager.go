@@ -37,18 +37,48 @@ func ensureFreshTmuxSession(args []string) (bool, error) {
 	setITermWTXTab()
 
 	session := fmt.Sprintf("wtx-%d", time.Now().UnixNano())
-	tmuxArgs := []string{"new-session", "-e", "WTX_STATUS_BIN=" + bin, "-s", session, "-c", cwd, bin}
-	if len(args) > 1 {
-		tmuxArgs = append(tmuxArgs, args[1:]...)
-	}
+	tmuxArgs := []string{"new-session", "-d", "-e", "WTX_STATUS_BIN=" + bin, "-s", session, "-c", cwd}
 	cmd := exec.Command("tmux", tmuxArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		return false, err
 	}
+
+	applyStartupThemeToSession(session, cwd)
+	if err := launchCommandInSession(session, bin, args[1:]); err != nil {
+		return false, err
+	}
+
+	attach := exec.Command("tmux", "attach-session", "-t", session)
+	attach.Stdin = os.Stdin
+	attach.Stdout = os.Stdout
+	attach.Stderr = os.Stderr
+	if err := attach.Run(); err != nil {
+		return false, err
+	}
 	return true, nil
+}
+
+func applyStartupThemeToSession(sessionID string, cwd string) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
+	banner := stripANSI(renderBanner("", cwd, ""))
+	configureTmuxStatus(sessionID, "200", tmuxStatusIntervalSeconds)
+	tmuxSetOption(sessionID, "status-left", " "+banner+" ")
+}
+
+func launchCommandInSession(sessionID string, bin string, args []string) error {
+	sessionID = strings.TrimSpace(sessionID)
+	bin = strings.TrimSpace(bin)
+	if sessionID == "" || bin == "" {
+		return fmt.Errorf("session and binary are required")
+	}
+	command := shellQuote(bin)
+	for _, arg := range args {
+		command += " " + shellQuote(arg)
+	}
+	return exec.Command("tmux", "send-keys", "-t", sessionID+":0.0", command, "C-m").Run()
 }
 
 func resolveSelfBinary(args []string) (string, error) {

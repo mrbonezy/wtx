@@ -43,10 +43,10 @@ func setITermTab(title string) {
 		writeTerminalEscape("\x1b]1;" + title + "\x07")
 		writeTerminalEscape("\x1b]2;" + title + "\x07")
 	}
-	writeTerminalEscape("\x1b]1337;SetTabColor=rgb:7d/56/f4\x07")
-	writeTerminalEscape("\x1b]6;1;bg;red;brightness;125\x07")
-	writeTerminalEscape("\x1b]6;1;bg;green;brightness;86\x07")
-	writeTerminalEscape("\x1b]6;1;bg;blue;brightness;244\x07")
+	writeTerminalEscape("\x1b]1337;SetTabColor=rgb:3d/2a/5c\x07")
+	writeTerminalEscape("\x1b]6;1;bg;red;brightness;61\x07")
+	writeTerminalEscape("\x1b]6;1;bg;green;brightness;42\x07")
+	writeTerminalEscape("\x1b]6;1;bg;blue;brightness;92\x07")
 }
 
 func resetITermTabColor() {

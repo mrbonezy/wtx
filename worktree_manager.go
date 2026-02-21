@@ -281,16 +281,12 @@ func (m *WorktreeManager) CheckoutNewBranch(worktreePath string, branch string, 
 		}
 	}
 	if localBranchExists(repoRoot, gitPath, branch) {
-		cmd := exec.Command(gitPath, "checkout", branch)
-		cmd.Dir = worktreePath
-		return cmd.Run()
+		return runCommandInDir(worktreePath, gitPath, "checkout", branch)
 	}
 	if baseRef == "" {
 		baseRef = "HEAD"
 	}
-	cmd := exec.Command(gitPath, "checkout", "-b", branch, baseRef)
-	cmd.Dir = worktreePath
-	return cmd.Run()
+	return runCommandInDir(worktreePath, gitPath, "checkout", "-b", branch, baseRef)
 }
 
 func (m *WorktreeManager) FetchRepo() error {
@@ -298,9 +294,7 @@ func (m *WorktreeManager) FetchRepo() error {
 	if err != nil {
 		return err
 	}
-	cmd := exec.Command(gitPath, "fetch")
-	cmd.Dir = repoRoot
-	return cmd.Run()
+	return runCommandInDir(repoRoot, gitPath, "fetch")
 }
 
 func (m *WorktreeManager) AcquireWorktreeLock(worktreePath string) (*WorktreeLock, error) {
@@ -504,17 +498,34 @@ func asRemoteRef(repoRoot string, gitPath string, remote string, ref string) (st
 }
 
 func preferredRemoteName(repoRoot string, gitPath string) string {
-	remotes, err := gitOutputInDir(repoRoot, gitPath, "remote")
+	remotes, err := listGitRemotes(repoRoot, gitPath)
 	if err != nil {
 		return ""
 	}
-	list := strings.Split(strings.TrimSpace(remotes), "\n")
-	for _, remote := range list {
-		if trimmed := strings.TrimSpace(remote); trimmed != "" {
-			return trimmed
+	if len(remotes) == 0 {
+		return ""
+	}
+	for _, remote := range remotes {
+		if remote == "origin" {
+			return "origin"
 		}
 	}
-	return ""
+	return remotes[0]
+}
+
+func listGitRemotes(repoRoot string, gitPath string) ([]string, error) {
+	remotes, err := gitOutputInDir(repoRoot, gitPath, "remote")
+	if err != nil {
+		return nil, err
+	}
+	list := strings.Split(strings.TrimSpace(remotes), "\n")
+	out := make([]string, 0, len(list))
+	for _, remote := range list {
+		if trimmed := strings.TrimSpace(remote); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out, nil
 }
 
 func (m *WorktreeManager) cachedBaseRef(repoRoot string) string {

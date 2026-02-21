@@ -21,6 +21,8 @@ func newRootCommand(args []string) *cobra.Command {
 
 	root.AddCommand(
 		newConfigCommand(),
+		newCheckoutCommand(),
+		newCompletionCommand(),
 		newTmuxStatusCommand(),
 		newTmuxTitleCommand(),
 		newTmuxAgentStartCommand(),

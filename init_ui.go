@@ -26,6 +26,8 @@ type configModel struct {
 	focused     configField
 	err         string
 	done        bool
+	zshStatus   zshCompletionStatus
+	zshErr      string
 }
 
 func newConfigModel() configModel {
@@ -83,11 +85,17 @@ func newConfigModel() configModel {
 		fetchToggle = *cfg.NewBranchFetchFirst
 	}
 
-	return configModel{
+	model := configModel{
 		inputs:      inputs,
 		fetchToggle: fetchToggle,
 		focused:     fieldAgent,
 	}
+	if status, err := detectZshCompletionStatus(); err == nil {
+		model.zshStatus = status
+	} else {
+		model.zshErr = err.Error()
+	}
+	return model
 }
 
 func (m configModel) Init() tea.Cmd {
@@ -184,6 +192,8 @@ func (m configModel) View() string {
 	b.WriteString(m.renderField(fieldMainScreenBranchCount, "Main screen branch count:", m.inputs[fieldMainScreenBranchCount].View()))
 	b.WriteString(m.renderFetchField())
 	b.WriteString(m.renderField(fieldIDECommand, "IDE command:", m.inputs[fieldIDECommand].View()))
+	b.WriteString("\n")
+	b.WriteString(m.renderZshCompletionStatus())
 
 	b.WriteString("\n")
 	b.WriteString("Use tab/shift+tab to navigate, space to toggle, enter to save, esc to cancel.\n")
@@ -214,4 +224,21 @@ func (m configModel) renderFetchField() string {
 		checked = " "
 	}
 	return fmt.Sprintf("%sFetch before create: [%s]\n", cursor, checked)
+}
+
+func (m configModel) renderZshCompletionStatus() string {
+	if m.zshErr != "" {
+		return fmt.Sprintf("Zsh completion: %s\n", errorStyle.Render("unavailable: "+m.zshErr))
+	}
+	if m.zshStatus.Installed && m.zshStatus.Enabled {
+		return "Zsh completion: installed and enabled\n"
+	}
+	parts := make([]string, 0, 2)
+	if !m.zshStatus.Installed {
+		parts = append(parts, "not installed")
+	}
+	if !m.zshStatus.Enabled {
+		parts = append(parts, "not enabled")
+	}
+	return fmt.Sprintf("Zsh completion: %s\nInstall with: wtx completion install\n", strings.Join(parts, ", "))
 }
