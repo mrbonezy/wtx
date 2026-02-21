@@ -225,6 +225,11 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 	}()
 
 	shouldResetTabColor = false
+	agentCommand := defaultAgentCommand
+	if cfg, err := LoadConfig(); err == nil {
+		agentCommand = cfg.AgentCommand
+	}
+	fmt.Fprintln(os.Stdout, formatRunCommandMessage(agentCommand))
 	if _, err := runner.RunInWorktree(openResult.path, openResult.branch, openResult.lock); err != nil {
 		if openResult.lock != nil {
 			openResult.lock.Release()
@@ -249,6 +254,14 @@ func checkoutDefaults(status WorktreeStatus) (string, bool) {
 		}
 	}
 	return base, fetch
+}
+
+func formatRunCommandMessage(agentCommand string) string {
+	cmd := strings.TrimSpace(agentCommand)
+	if cmd == "" {
+		cmd = defaultAgentCommand
+	}
+	return "Running " + cmd
 }
 
 func loadOpenSlotsForCheckout(orchestrator *WorktreeOrchestrator, status WorktreeStatus) ([]openSlotState, error) {

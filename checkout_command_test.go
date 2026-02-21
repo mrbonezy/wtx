@@ -31,3 +31,34 @@ func TestCheckoutRejectsConflictingFetchFlags(t *testing.T) {
 		t.Fatalf("expected conflicting flag message, got %q", msg)
 	}
 }
+
+func TestFormatRunCommandMessage_NoQuotes(t *testing.T) {
+	got := formatRunCommandMessage("claude --dangerously-skip-permissions")
+	want := "Running claude --dangerously-skip-permissions"
+	if got != want {
+		t.Fatalf("expected %q, got %q", want, got)
+	}
+}
+
+func TestCheckoutDefaults_UseConfigValues(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	fetch := false
+	if err := SaveConfig(Config{
+		AgentCommand:          defaultAgentCommand,
+		NewBranchBaseRef:      "origin/develop",
+		NewBranchFetchFirst:   &fetch,
+		MainScreenBranchLimit: defaultMainScreenBranchLimit,
+	}); err != nil {
+		t.Fatalf("save config: %v", err)
+	}
+
+	base, doFetch := checkoutDefaults(WorktreeStatus{BaseRef: "origin/main"})
+	if base != "origin/develop" {
+		t.Fatalf("expected config base ref, got %q", base)
+	}
+	if doFetch {
+		t.Fatalf("expected fetch false from config, got true")
+	}
+}
