@@ -73,11 +73,15 @@ func (r *Runner) runInTmux(worktreePath string, branch string, lock *WorktreeLoc
 		}
 	}
 	activateWorktreeUI(worktreePath, branch)
-	if paneID != "" {
-		_ = exec.Command("tmux", "resize-pane", "-t", paneID, "-y", "1").Run()
-	}
 	if newPaneID != "" {
 		_ = exec.Command("tmux", "select-pane", "-t", newPaneID).Run()
+	}
+	if paneID != "" {
+		if openShell {
+			_ = exec.Command("tmux", "resize-pane", "-t", paneID, "-y", "1").Run()
+		} else {
+			_ = exec.Command("tmux", "kill-pane", "-t", paneID).Run()
+		}
 	}
 	return RunResult{Started: true}, nil
 }
