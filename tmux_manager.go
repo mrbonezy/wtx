@@ -267,6 +267,9 @@ func ensureWTXSessionDefaults() {
 	tmuxSetOption(sessionID, "destroy-unattached", "on")
 	// Disable mouse so normal terminal copy (Cmd+C) works.
 	tmuxSetOption(sessionID, "mouse", "off")
+	// Keep pane separators aligned with WTX brand colors instead of tmux defaults.
+	tmuxSetOption(sessionID, "pane-border-style", "fg=#3d2a5c")
+	tmuxSetOption(sessionID, "pane-active-border-style", "fg=#6a4b9c")
 	// Stop hijacking Option+Left/Right so editor navigation keeps working.
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-Left").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-Right").Run()
