@@ -35,6 +35,7 @@ type model struct {
 	ghFetchingKey         string
 	forceGHRefresh        bool
 	ghWarnMsg             string
+	updateHint            string
 	errMsg                string
 	warnMsg               string
 	creatingBranch        string
@@ -121,7 +122,13 @@ func newModel() model {
 }
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(loadOpenScreenCmd(m.orchestrator, m.mgr), m.ghSpinner.Tick, pollGHTickCmd(), pollStatusTickCmd())
+	return tea.Batch(
+		loadOpenScreenCmd(m.orchestrator, m.mgr),
+		m.ghSpinner.Tick,
+		pollGHTickCmd(),
+		pollStatusTickCmd(),
+		checkInteractiveUpdateHintCmd(),
+	)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -199,6 +206,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return applyFormMsg(msg)
 	}
 	switch msg := msg.(type) {
+	case interactiveUpdateHintMsg:
+		m.updateHint = strings.TrimSpace(msg.hint)
+		return m, nil
 	case openScreenLoadedMsg:
 		m.ready = true
 		m.status = msg.status
@@ -1425,6 +1435,10 @@ func (m model) View() string {
 	}
 	if m.ghWarnMsg != "" {
 		b.WriteString(warnStyle.Render(m.ghWarnMsg))
+		b.WriteString("\n")
+	}
+	if m.updateHint != "" {
+		b.WriteString(warnStyle.Render(m.updateHint))
 		b.WriteString("\n")
 	}
 	if len(m.status.Malformed) > 0 {

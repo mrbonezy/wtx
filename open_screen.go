@@ -288,6 +288,11 @@ func renderOpenScreen(m model) string {
 			b.WriteString(errorStyle.Render(m.errMsg))
 			b.WriteString("\n")
 		}
+		if m.updateHint != "" {
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render(m.updateHint))
+			b.WriteString("\n")
+		}
 		b.WriteString("\nUse up/down to select. d delete selected (with confirm). u unlock selected (with confirm). n new worktree.\n")
 		if m.openDebugCreating {
 			b.WriteString("Type branch name, enter to create, esc to cancel. ")
@@ -308,6 +313,11 @@ func renderOpenScreen(m model) string {
 		if m.errMsg != "" {
 			b.WriteString("\n")
 			b.WriteString(errorStyle.Render(m.errMsg))
+			b.WriteString("\n")
+		}
+		if m.updateHint != "" {
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render(m.updateHint))
 			b.WriteString("\n")
 		}
 		return b.String()
@@ -346,6 +356,11 @@ func renderOpenScreen(m model) string {
 		if m.warnMsg != "" {
 			b.WriteString("\n")
 			b.WriteString(warnStyle.Render(m.warnMsg))
+			b.WriteString("\n")
+		}
+		if m.updateHint != "" {
+			b.WriteString("\n")
+			b.WriteString(warnStyle.Render(m.updateHint))
 			b.WriteString("\n")
 		}
 		b.WriteString("\nUse up/down to choose, enter to select. Esc goes back. Ctrl+R refreshes (auto-refresh every 2s).\n")
@@ -417,6 +432,11 @@ func renderOpenScreen(m model) string {
 	if m.errMsg != "" {
 		b.WriteString("\n")
 		b.WriteString(errorStyle.Render(m.errMsg))
+		b.WriteString("\n")
+	}
+	if m.updateHint != "" {
+		b.WriteString("\n")
+		b.WriteString(warnStyle.Render(m.updateHint))
 		b.WriteString("\n")
 	}
 

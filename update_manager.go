@@ -127,7 +127,7 @@ func maybeStartInvocationUpdateCheck(args []string) {
 
 func shouldRunInvocationUpdateCheck(args []string) bool {
 	if len(args) <= 1 {
-		return true
+		return false
 	}
 	name := strings.TrimSpace(args[1])
 	if name == "" {

@@ -85,7 +85,7 @@ func TestShouldRunInvocationUpdateCheck(t *testing.T) {
 		args []string
 		want bool
 	}{
-		{name: "interactive", args: []string{"wtx"}, want: true},
+		{name: "interactive", args: []string{"wtx"}, want: false},
 		{name: "normal command", args: []string{"wtx", "config"}, want: true},
 		{name: "completion", args: []string{"wtx", "completion"}, want: false},
 		{name: "internal helper", args: []string{"wtx", "tmux-status"}, want: false},
