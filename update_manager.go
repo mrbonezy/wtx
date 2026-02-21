@@ -52,11 +52,12 @@ func runUpdateCommand(checkOnly bool, quiet bool) error {
 	if err != nil {
 		return err
 	}
+	cur := currentVersion()
 
 	result := updateCheckResult{
-		CurrentVersion:  strings.TrimSpace(version),
+		CurrentVersion:  cur,
 		LatestVersion:   latest,
-		UpdateAvailable: isUpdateAvailable(strings.TrimSpace(version), latest),
+		UpdateAvailable: isUpdateAvailableForInstall(cur, latest),
 	}
 
 	if checkOnly {
@@ -116,7 +117,7 @@ func maybeStartInvocationUpdateCheck(args []string) {
 		ctx, cancel := context.WithTimeout(context.Background(), startupUpdateTimeout)
 		defer cancel()
 
-		result, err := checkForUpdatesWithThrottle(ctx, strings.TrimSpace(version), defaultUpdateInterval)
+		result, err := checkForUpdatesWithThrottle(ctx, currentVersion(), defaultUpdateInterval)
 		if err != nil || !result.UpdateAvailable {
 			return
 		}
@@ -288,6 +289,18 @@ func isUpdateAvailable(currentVersion string, latestVersion string) bool {
 		return false
 	}
 	return compareReleaseVersions(latest, current) > 0
+}
+
+func isUpdateAvailableForInstall(currentVersion string, latestVersion string) bool {
+	currentVersion = strings.TrimSpace(currentVersion)
+	latestVersion = strings.TrimSpace(latestVersion)
+	if currentVersion == "" || latestVersion == "" {
+		return false
+	}
+	if isUpdateAvailable(currentVersion, latestVersion) {
+		return true
+	}
+	return !isReleaseVersion(currentVersion) && isReleaseVersion(latestVersion)
 }
 
 func isReleaseVersion(version string) bool {

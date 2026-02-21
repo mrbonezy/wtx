@@ -9,15 +9,21 @@ import (
 )
 
 func newRootCommand(args []string) *cobra.Command {
+	var showVersion bool
 	root := &cobra.Command{
 		Use:           "wtx",
 		Short:         "Interactive Git worktree picker",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			if showVersion {
+				fmt.Println(currentVersion())
+				return nil
+			}
 			return runDefault(args)
 		},
 	}
+	root.Flags().BoolVar(&showVersion, "version", false, "Print wtx version and exit")
 
 	root.AddCommand(
 		newCheckoutCommand(),

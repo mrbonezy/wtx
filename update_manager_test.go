@@ -64,6 +64,21 @@ func TestIsUpdateAvailable(t *testing.T) {
 	}
 }
 
+func TestIsUpdateAvailableForInstall(t *testing.T) {
+	if !isUpdateAvailableForInstall("v1.2.3", "v1.2.4") {
+		t.Fatalf("expected release-to-release update to be available")
+	}
+	if !isUpdateAvailableForInstall("dev", "v1.2.4") {
+		t.Fatalf("expected dev build to be install-updatable to release")
+	}
+	if !isUpdateAvailableForInstall("v0.0.0-20240202-abcdef", "v1.2.4") {
+		t.Fatalf("expected pseudo-version build to be install-updatable to release")
+	}
+	if isUpdateAvailableForInstall("dev", "dev") {
+		t.Fatalf("expected non-release latest to remain not updatable")
+	}
+}
+
 func TestShouldRunInvocationUpdateCheck(t *testing.T) {
 	tests := []struct {
 		name string
