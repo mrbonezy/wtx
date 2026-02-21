@@ -121,10 +121,10 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 	runner := NewRunner(lockMgr)
 
 	var (
-		status          WorktreeStatus
+		status            WorktreeStatus
 		gitPath, repoRoot string
-		baseRef         string
-		doFetch         bool
+		baseRef           string
+		doFetch           bool
 	)
 	if err := runCheckoutStep("Preparing checkout", func() error {
 		status = orchestrator.Status()
@@ -276,7 +276,10 @@ func runCheckoutStep(step string, fn func() error) error {
 	}
 	stop := startDelayedSpinner(step, checkoutStepSpinnerDelay)
 	defer stop()
-	return fn()
+	if err := fn(); err != nil {
+		return fmt.Errorf("%s: %w", strings.ToLower(step), err)
+	}
+	return nil
 }
 
 func loadOpenSlotsForCheckout(orchestrator *WorktreeOrchestrator, status WorktreeStatus) ([]openSlotState, error) {

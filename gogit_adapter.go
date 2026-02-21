@@ -12,7 +12,18 @@ import (
 	git "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/transport"
+	gitssh "github.com/go-git/go-git/v5/plumbing/transport/ssh"
+	sshconfig "github.com/kevinburke/ssh_config"
 )
+
+var sshConfigGet = func(alias, key string) string {
+	return sshconfig.Get(alias, key)
+}
+
+var sshConfigGetAll = func(alias, key string) []string {
+	return sshconfig.GetAll(alias, key)
+}
 
 func isGitBinary(path string) bool {
 	name := strings.ToLower(strings.TrimSpace(filepath.Base(path)))
@@ -336,11 +347,189 @@ func gitFetch(dir string, args []string) (string, bool, error) {
 	if err != nil {
 		return "", true, err
 	}
-	err = repo.Fetch(&git.FetchOptions{RemoteName: remoteName})
+
+	endpoint, remoteURL, endpointErr := remoteEndpoint(repo, remoteName)
+	if endpointErr != nil {
+		return "", true, endpointErr
+	}
+
+	opts := &git.FetchOptions{RemoteName: remoteName}
+	auth, usedAgent, authErr := fetchAuthMethod(endpoint, remoteURL)
+	if authErr != nil {
+		return "", true, authErr
+	}
+	opts.Auth = auth
+
+	err = repo.Fetch(opts)
+	if err != nil && usedAgent && isSSHAuthFailure(err) && endpoint != nil && isSSHEndpoint(endpoint) {
+		fallbackAuth, fallbackErr := sshKeyFileAuthForEndpoint(endpoint, remoteURL)
+		if fallbackErr == nil {
+			opts.Auth = fallbackAuth
+			err = repo.Fetch(opts)
+		}
+	}
 	if err != nil && !errors.Is(err, git.NoErrAlreadyUpToDate) {
 		return "", true, err
 	}
 	return "", true, nil
+}
+
+func fetchAuthMethod(endpoint *transport.Endpoint, remoteURL string) (transport.AuthMethod, bool, error) {
+	if endpoint == nil || !isSSHEndpoint(endpoint) {
+		return nil, false, nil
+	}
+	return sshAuthMethodForEndpoint(endpoint, remoteURL)
+}
+
+func remoteEndpoint(repo *git.Repository, remoteName string) (*transport.Endpoint, string, error) {
+	remote, err := repo.Remote(remoteName)
+	if err != nil {
+		return nil, "", err
+	}
+	cfg := remote.Config()
+	if cfg == nil || len(cfg.URLs) == 0 {
+		return nil, "", fmt.Errorf("remote %q has no URL", remoteName)
+	}
+	remoteURL := strings.TrimSpace(cfg.URLs[0])
+	endpoint, err := transport.NewEndpoint(remoteURL)
+	if err != nil {
+		return nil, remoteURL, err
+	}
+	return endpoint, remoteURL, nil
+}
+
+func isSSHEndpoint(endpoint *transport.Endpoint) bool {
+	if endpoint == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(endpoint.Protocol)) {
+	case "ssh", "git+ssh", "ssh+git":
+		return true
+	default:
+		return false
+	}
+}
+
+func sshAuthMethodForEndpoint(endpoint *transport.Endpoint, remoteURL string) (transport.AuthMethod, bool, error) {
+	user := strings.TrimSpace(endpoint.User)
+	if user == "" {
+		user = strings.TrimSpace(sshConfigGet(endpoint.Host, "User"))
+	}
+	if user == "" {
+		user = "git"
+	}
+
+	if auth, err := gitssh.NewSSHAgentAuth(user); err == nil {
+		return auth, true, nil
+	}
+	auth, err := sshKeyFileAuthForUser(endpoint.Host, user, remoteURL)
+	return auth, false, err
+}
+
+func sshKeyFileAuthForEndpoint(endpoint *transport.Endpoint, remoteURL string) (transport.AuthMethod, error) {
+	user := strings.TrimSpace(endpoint.User)
+	if user == "" {
+		user = strings.TrimSpace(sshConfigGet(endpoint.Host, "User"))
+	}
+	if user == "" {
+		user = "git"
+	}
+	return sshKeyFileAuthForUser(endpoint.Host, user, remoteURL)
+}
+
+func sshKeyFileAuthForUser(host string, user string, remoteURL string) (transport.AuthMethod, error) {
+	keyFiles := sshIdentityFiles(host, user)
+	var errs []string
+	for _, keyPath := range keyFiles {
+		auth, err := gitssh.NewPublicKeysFromFile(user, keyPath, "")
+		if err == nil {
+			return auth, nil
+		}
+		errs = append(errs, fmt.Sprintf("%s: %v", keyPath, err))
+	}
+	if len(errs) == 0 {
+		return nil, fmt.Errorf("unable to configure ssh auth for %q; no usable keys found", remoteURL)
+	}
+	return nil, fmt.Errorf("unable to configure ssh auth for %q: %s", remoteURL, strings.Join(errs, "; "))
+}
+
+func isSSHAuthFailure(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(strings.TrimSpace(err.Error()))
+	return strings.Contains(msg, "unable to authenticate") ||
+		strings.Contains(msg, "attempted methods") ||
+		strings.Contains(msg, "permission denied (publickey)")
+}
+
+func sshIdentityFiles(host string, remoteUser string) []string {
+	fromConfig := sshConfigGetAll(host, "IdentityFile")
+	expanded := make([]string, 0, len(fromConfig)+6)
+	seen := make(map[string]struct{}, len(fromConfig)+6)
+
+	appendIfValid := func(candidate string) {
+		path := expandSSHIdentityPath(candidate, host, remoteUser)
+		if path == "" {
+			return
+		}
+		if _, ok := seen[path]; ok {
+			return
+		}
+		info, err := os.Stat(path)
+		if err != nil || info.IsDir() {
+			return
+		}
+		seen[path] = struct{}{}
+		expanded = append(expanded, path)
+	}
+
+	for _, candidate := range fromConfig {
+		appendIfValid(candidate)
+	}
+	for _, name := range []string{
+		"~/.ssh/id_ed25519",
+		"~/.ssh/id_ecdsa",
+		"~/.ssh/id_rsa",
+		"~/.ssh/id_dsa",
+	} {
+		appendIfValid(name)
+	}
+	return expanded
+}
+
+func expandSSHIdentityPath(raw string, host string, remoteUser string) string {
+	path := strings.TrimSpace(raw)
+	path = strings.Trim(path, `"'`)
+	if path == "" {
+		return ""
+	}
+	if strings.EqualFold(path, "none") {
+		return ""
+	}
+
+	path = strings.ReplaceAll(path, "%h", host)
+	path = strings.ReplaceAll(path, "%r", remoteUser)
+	if localUser := strings.TrimSpace(os.Getenv("USER")); localUser != "" {
+		path = strings.ReplaceAll(path, "%u", localUser)
+	}
+	path = strings.ReplaceAll(path, "%%", "%")
+
+	if strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return ""
+		}
+		path = filepath.Join(home, path[2:])
+	}
+	if !filepath.IsAbs(path) {
+		home, err := os.UserHomeDir()
+		if err != nil || strings.TrimSpace(home) == "" {
+			return ""
+		}
+		path = filepath.Join(home, ".ssh", path)
+	}
+	return filepath.Clean(path)
 }
 
 func gitCheckout(dir string, args []string) (string, bool, error) {
