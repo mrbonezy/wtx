@@ -14,6 +14,8 @@ import (
 const (
 	zshCompletionBlockStart = "# >>> wtx completion >>>"
 	zshCompletionBlockEnd   = "# <<< wtx completion <<<"
+	zshAliasBlockStart      = "# >>> wtx aliases >>>"
+	zshAliasBlockEnd        = "# <<< wtx aliases <<<"
 )
 
 type zshCompletionStatus struct {
@@ -165,6 +167,13 @@ func installZshCompletion(root *cobra.Command) (zshCompletionStatus, error) {
 	}
 
 	updated := upsertCompletionBlock(current, block)
+	updated = upsertAliasBlock(updated, strings.Join([]string{
+		zshAliasBlockStart,
+		"alias wco='wtx co'",
+		"compdef _wtx wco",
+		zshAliasBlockEnd,
+		"",
+	}, "\n"))
 	if err := os.WriteFile(status.ZshrcPath, []byte(updated), 0o644); err != nil {
 		return zshCompletionStatus{}, err
 	}
@@ -173,10 +182,18 @@ func installZshCompletion(root *cobra.Command) (zshCompletionStatus, error) {
 }
 
 func upsertCompletionBlock(content string, block string) string {
-	start := strings.Index(content, zshCompletionBlockStart)
-	end := strings.Index(content, zshCompletionBlockEnd)
+	return upsertManagedBlock(content, block, zshCompletionBlockStart, zshCompletionBlockEnd)
+}
+
+func upsertAliasBlock(content string, block string) string {
+	return upsertManagedBlock(content, block, zshAliasBlockStart, zshAliasBlockEnd)
+}
+
+func upsertManagedBlock(content string, block string, startMarker string, endMarker string) string {
+	start := strings.Index(content, startMarker)
+	end := strings.Index(content, endMarker)
 	if start >= 0 && end >= start {
-		end += len(zshCompletionBlockEnd)
+		end += len(endMarker)
 		replaced := content[:start] + block + content[end:]
 		return strings.TrimRight(replaced, "\n") + "\n"
 	}
