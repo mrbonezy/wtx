@@ -7,10 +7,13 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/spf13/cobra"
 )
+
+const checkoutStepSpinnerDelay = 0 * time.Millisecond
 
 func newCheckoutCommand() *cobra.Command {
 	var create bool
@@ -117,51 +120,53 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 	orchestrator := NewWorktreeOrchestrator(mgr, lockMgr, NewGHManager())
 	runner := NewRunner(lockMgr)
 
-	status := orchestrator.Status()
-	if status.Err != nil {
-		return status.Err
-	}
-	if !status.GitInstalled {
-		return errGitNotInstalled
-	}
-	if !status.InRepo {
-		return errNotInGitRepository
-	}
-
-	gitPath, repoRoot, err := requireGitContext("")
-	if err != nil {
-		return err
-	}
-
-	if create {
+	var (
+		status          WorktreeStatus
+		gitPath, repoRoot string
+		baseRef         string
+		doFetch         bool
+	)
+	if err := runCheckoutStep("Preparing checkout", func() error {
+		status = orchestrator.Status()
+		if status.Err != nil {
+			return status.Err
+		}
+		if !status.GitInstalled {
+			return errGitNotInstalled
+		}
+		if !status.InRepo {
+			return errNotInGitRepository
+		}
+		var err error
+		gitPath, repoRoot, err = requireGitContext("")
+		if err != nil {
+			return err
+		}
 		exists, err := branchExistsLocalOrRemote(repoRoot, gitPath, branch)
 		if err != nil {
 			return err
 		}
-		if exists {
+		if create && exists {
 			return fmt.Errorf("branch %q already exists locally or on a remote", branch)
 		}
-	} else {
-		exists, err := branchExistsLocalOrRemote(repoRoot, gitPath, branch)
-		if err != nil {
-			return err
-		}
-		if !exists {
+		if !create && !exists {
 			return fmt.Errorf("branch %q does not exist locally or on known remote-tracking refs", branch)
 		}
-	}
-
-	baseRef, doFetch := checkoutDefaults(status)
-	if create {
-		if v := strings.TrimSpace(baseOverride); v != "" {
-			baseRef = v
+		baseRef, doFetch = checkoutDefaults(status)
+		if create {
+			if v := strings.TrimSpace(baseOverride); v != "" {
+				baseRef = v
+			}
+			if fetchOverride != nil {
+				doFetch = *fetchOverride
+			}
+			if err := validateCreateCheckoutBaseRef(repoRoot, gitPath, baseRef, doFetch); err != nil {
+				return err
+			}
 		}
-		if fetchOverride != nil {
-			doFetch = *fetchOverride
-		}
-		if err := validateCreateCheckoutBaseRef(repoRoot, gitPath, baseRef, doFetch); err != nil {
-			return err
-		}
+		return nil
+	}); err != nil {
+		return err
 	}
 
 	handled, err := ensureFreshTmuxSession(args)
@@ -173,8 +178,12 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 	}
 	setStartupStatusBanner()
 
-	slots, err := loadOpenSlotsForCheckout(orchestrator, status)
-	if err != nil {
+	var slots []openSlotState
+	if err := runCheckoutStep("Preparing worktree", func() error {
+		var err error
+		slots, err = loadOpenSlotsForCheckout(orchestrator, status)
+		return err
+	}); err != nil {
 		return err
 	}
 
@@ -188,8 +197,11 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 
 	var openResult openUseReadyMsg
 	if slot, ok := orchestrator.ResolveOpenTargetSlot(slots, branch, create); ok {
-		openResult, err = runOpenSelectionCmd(openCmdForTargetOnSlot(target, slot))
-		if err != nil {
+		if err := runCheckoutStep("Switching worktree", func() error {
+			var err error
+			openResult, err = runOpenSelectionCmd(openCmdForTargetOnSlot(target, slot))
+			return err
+		}); err != nil {
 			return err
 		}
 	} else {
@@ -201,8 +213,11 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 		if !createNew {
 			return nil
 		}
-		openResult, err = runOpenSelectionCmd(openCmdForCreateTarget(target))
-		if err != nil {
+		if err := runCheckoutStep("Creating worktree", func() error {
+			var err error
+			openResult, err = runOpenSelectionCmd(openCmdForCreateTarget(target))
+			return err
+		}); err != nil {
 			return err
 		}
 	}
@@ -225,12 +240,10 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 	}()
 
 	shouldResetTabColor = false
-	agentCommand := defaultAgentCommand
-	if cfg, err := LoadConfig(); err == nil {
-		agentCommand = cfg.AgentCommand
-	}
-	fmt.Fprintln(os.Stdout, formatRunCommandMessage(agentCommand))
-	if _, err := runner.RunInWorktree(openResult.path, openResult.branch, openResult.lock); err != nil {
+	if err := runCheckoutStep("Launching agent", func() error {
+		_, err := runner.RunInWorktree(openResult.path, openResult.branch, openResult.lock)
+		return err
+	}); err != nil {
 		if openResult.lock != nil {
 			openResult.lock.Release()
 		}
@@ -256,12 +269,14 @@ func checkoutDefaults(status WorktreeStatus) (string, bool) {
 	return base, fetch
 }
 
-func formatRunCommandMessage(agentCommand string) string {
-	cmd := strings.TrimSpace(agentCommand)
-	if cmd == "" {
-		cmd = defaultAgentCommand
+func runCheckoutStep(step string, fn func() error) error {
+	step = strings.TrimSpace(step)
+	if step == "" {
+		step = "Working"
 	}
-	return "Running " + cmd
+	stop := startDelayedSpinner(step, checkoutStepSpinnerDelay)
+	defer stop()
+	return fn()
 }
 
 func loadOpenSlotsForCheckout(orchestrator *WorktreeOrchestrator, status WorktreeStatus) ([]openSlotState, error) {

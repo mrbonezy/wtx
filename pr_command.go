@@ -17,8 +17,7 @@ import (
 
 const (
 	prResolveTimeout        = 8 * time.Second
-	prResolveSpinnerDelay   = 150 * time.Millisecond
-	prResolveSpinnerTick    = 90 * time.Millisecond
+	prResolveSpinnerDelay   = 0 * time.Millisecond
 	prResolveSpinnerMessage = "Resolving PR..."
 )
 
@@ -145,13 +144,20 @@ func startDelayedSpinner(message string, delay time.Duration) func() {
 		case <-timer.C:
 		}
 
-		frames := []string{"|", "/", "-", "\\"}
-		ticker := time.NewTicker(prResolveSpinnerTick)
+		s := newSpinner()
+		frames := s.Spinner.Frames
+		interval := s.Spinner.FPS
+		if interval <= 0 {
+			interval = 90 * time.Millisecond
+		}
+		ticker := time.NewTicker(interval)
 		defer ticker.Stop()
-		i := 0
-		for {
-			fmt.Fprintf(os.Stderr, "\r%s %s", frames[i%len(frames)], message)
-			i++
+			i := 0
+			for {
+				frame := frames[i%len(frames)]
+				frame = s.Style.Render(frame)
+				fmt.Fprintf(os.Stderr, "\r%s %s", frame, message)
+				i++
 			select {
 			case <-done:
 				fmt.Fprint(os.Stderr, "\r\033[2K")

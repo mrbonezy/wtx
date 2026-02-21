@@ -32,14 +32,6 @@ func TestCheckoutRejectsConflictingFetchFlags(t *testing.T) {
 	}
 }
 
-func TestFormatRunCommandMessage_NoQuotes(t *testing.T) {
-	got := formatRunCommandMessage("claude --dangerously-skip-permissions")
-	want := "Running claude --dangerously-skip-permissions"
-	if got != want {
-		t.Fatalf("expected %q, got %q", want, got)
-	}
-}
-
 func TestCheckoutDefaults_UseConfigValues(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
