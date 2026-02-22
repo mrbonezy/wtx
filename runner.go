@@ -146,14 +146,15 @@ func commandToRunInTmux(worktreePath string, openShell bool, runCmd string) stri
 }
 
 func activateWorktreeUI(worktreePath string, branch string) {
-	clearScreen()
 	recordRecentBranchForWorktree(worktreePath, branch)
 	if tmuxAvailable() {
+		// Avoid full-screen clears in tmux when swapping panes; this noticeably reduces flicker.
 		setDynamicWorktreeStatus(worktreePath)
 		// Avoid overriding tmux-managed dynamic titles with a static branch title.
 		setITermWTXTab()
 		return
 	}
+	clearScreen()
 	setITermWTXBranchTab(branch)
 }
 

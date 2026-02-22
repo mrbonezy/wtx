@@ -15,7 +15,7 @@ import (
 )
 
 const tmuxStatusIntervalSeconds = "10"
-const tmuxStatusRightHint = " ^A actions#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} "
+const tmuxStatusRightHint = " ^A actions | ^W back#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} "
 
 func ensureFreshTmuxSession(args []string) (bool, error) {
 	if tmuxIntegrationDisabled() {
@@ -84,6 +84,8 @@ func applyStartupThemeToSession(sessionID string, cwd string) {
 		return
 	}
 	banner := stripANSI(renderBanner("", cwd, ""))
+	// Session is detached at startup; avoid destroy-unattached here.
+	applyWTXSessionDefaults(sessionID, false)
 	configureTmuxStatus(sessionID, "200", tmuxStatusIntervalSeconds)
 	tmuxSetOption(sessionID, "status-left", " "+banner+" ")
 }
@@ -306,8 +308,18 @@ func ensureWTXSessionDefaults() {
 	if err != nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	applyWTXSessionDefaults(sessionID, true)
+}
+
+func applyWTXSessionDefaults(sessionID string, enableDestroyUnattached bool) {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return
+	}
 	// Ensure session dies when terminal client closes, so pane-backed locks do not linger.
-	tmuxSetOption(sessionID, "destroy-unattached", "on")
+	if enableDestroyUnattached {
+		tmuxSetOption(sessionID, "destroy-unattached", "on")
+	}
 	// Disable mouse so normal terminal copy (Cmd+C) works.
 	tmuxSetOption(sessionID, "mouse", "off")
 	// Keep pane separators aligned with WTX brand colors instead of tmux defaults.
@@ -321,6 +333,11 @@ func ensureWTXSessionDefaults() {
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-Down").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-S-Up").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-S-Down").Run()
+	// Preserve Enter variants for the pane program (for example Shift+Enter in coding agents).
+	_ = exec.Command("tmux", "unbind-key", "-n", "Enter").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "S-Enter").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "C-Enter").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "M-Enter").Run()
 	// Only resize when split panes are present.
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-Up", "if-shell", "-F", "#{>:#{window_panes},1}", "select-pane -U").Run()
 	_ = exec.Command("tmux", "bind-key", "-r", "-n", "M-Down", "if-shell", "-F", "#{>:#{window_panes},1}", "select-pane -D").Run()
@@ -339,6 +356,7 @@ func ensureWTXSessionDefaults() {
 	_ = exec.Command("tmux", "unbind-key", "-n", "C-a").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "C-p").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "C-l").Run()
+	_ = exec.Command("tmux", "unbind-key", "-n", "C-w").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-a").Run()
 	_ = exec.Command("tmux", "unbind-key", "-n", "M-A").Run()
 	configureTmuxActionBindings(sessionID, resolveAgentLifecycleBinary())
@@ -358,6 +376,8 @@ func configureTmuxActionBindings(sessionID string, wtxBin string) {
 	_ = exec.Command("tmux", "bind-key", "-n", "C-s", "run-shell", splitCmd).Run()
 	_ = exec.Command("tmux", "bind-key", "-n", "C-p", "run-shell", prCmd).Run()
 	_ = exec.Command("tmux", "bind-key", "-n", "C-l", "popup", "-E", "-w", "60", "-h", "20", ideCmd).Run()
+	backCmd := tmuxActionsCommandWithAction(wtxBin, tmuxActionBack)
+	_ = exec.Command("tmux", "bind-key", "-n", "C-w", "run-shell", backCmd).Run()
 }
 
 func configureTmuxStatus(sessionID string, leftLength string, interval string) {
@@ -500,14 +520,28 @@ func runTmuxAgentExit(args []string) error {
 		return nil
 	}
 	exitCode := parseIntArg(args, "--code", 0)
+	forceUnlock := parseBoolArg(args, "--force-unlock")
 	if _, repoRoot, err := requireGitContext(worktreePath); err == nil && strings.TrimSpace(repoRoot) != "" {
-		_ = NewLockManager().ReleaseIfOwned(repoRoot, worktreePath)
+		lockMgr := NewLockManager()
+		_ = lockMgr.ReleaseIfOwned(repoRoot, worktreePath)
+		if forceUnlock {
+			_ = lockMgr.ForceUnlock(repoRoot, worktreePath)
+		}
 	}
 	return writeTmuxAgentState(worktreePath, tmuxAgentState{
 		State:        "exited",
 		ExitCode:     exitCode,
 		ExitedAtUnix: time.Now().Unix(),
 	})
+}
+
+func parseBoolArg(args []string, key string) bool {
+	for i := 0; i < len(args); i++ {
+		if strings.TrimSpace(args[i]) == key {
+			return true
+		}
+	}
+	return false
 }
 
 func parseIntArg(args []string, key string, fallback int) int {

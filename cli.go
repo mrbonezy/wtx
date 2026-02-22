@@ -155,15 +155,22 @@ func newTmuxAgentExitCommand() *cobra.Command {
 }
 
 func newTmuxActionsCommand() *cobra.Command {
-	return &cobra.Command{
+	var sourcePane string
+	cmd := &cobra.Command{
 		Use:    "tmux-actions [path] [action]",
 		Short:  "Open tmux actions popup",
 		Args:   cobra.MaximumNArgs(2),
 		Hidden: true,
 		RunE: func(_ *cobra.Command, cmdArgs []string) error {
-			return runTmuxActions(cmdArgs)
-		},
+			args := append([]string{}, cmdArgs...)
+			if strings.TrimSpace(sourcePane) != "" {
+				args = append([]string{"--source-pane", sourcePane}, args...)
+			}
+				return runTmuxActions(args)
+			},
 	}
+	cmd.Flags().StringVar(&sourcePane, "source-pane", "", "tmux pane id that triggered the action")
+	return cmd
 }
 
 func newShellCommand() *cobra.Command {

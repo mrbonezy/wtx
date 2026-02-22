@@ -229,9 +229,6 @@ func runCheckout(branch string, create bool, baseOverride string, fetchOverride 
 		return errors.New("checkout did not resolve a worktree")
 	}
 
-	setITermWTXTab()
-	setStartupStatusBanner()
-
 	shouldResetTabColor := true
 	defer func() {
 		if shouldResetTabColor {

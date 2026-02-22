@@ -142,7 +142,7 @@ func shouldRunInvocationUpdateCheck(args []string) bool {
 		return true
 	}
 	switch name {
-	case "-v", "--version", "tmux-status", "tmux-title", "tmux-agent-start", "tmux-agent-exit", "tmux-actions", "completion", "__complete", "__completeNoDesc", "update":
+	case "-v", "--version", "co", "checkout", "pr", "tmux-status", "tmux-title", "tmux-agent-start", "tmux-agent-exit", "tmux-actions", "completion", "__complete", "__completeNoDesc", "update":
 		return false
 	default:
 		return true

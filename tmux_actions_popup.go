@@ -22,6 +22,7 @@ const (
 	tmuxActionShellTab   tmuxAction = "shell_tab"
 	tmuxActionIDE        tmuxAction = "ide"
 	tmuxActionPR         tmuxAction = "pr"
+	tmuxActionBack       tmuxAction = "back_to_wtx"
 )
 
 type tmuxActionItem struct {
@@ -45,6 +46,7 @@ type tmuxActionsModel struct {
 
 func newTmuxActionsModel(basePath string, prAvailable bool, canOpenITermTab bool) tmuxActionsModel {
 	items := []tmuxActionItem{
+		{Label: "Back to WTX (stop agent)", Action: tmuxActionBack, Keywords: "back return wtx unlock ctrl+w"},
 		{Label: "Open shell (split down)", Action: tmuxActionShellSplit, Keywords: "shell split pane ctrl+s s"},
 	}
 	if canOpenITermTab {
@@ -243,24 +245,35 @@ func (m tmuxActionsModel) selectedItem() (tmuxActionItem, bool) {
 }
 
 func runTmuxActions(args []string) error {
+	sourcePane := ""
+	positional := make([]string, 0, len(args))
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--source-pane" && i+1 < len(args) {
+			sourcePane = strings.TrimSpace(args[i+1])
+			i++
+			continue
+		}
+		positional = append(positional, args[i])
+	}
+
 	basePath := ""
 	forcedAction := tmuxAction("")
-	if len(args) > 0 {
-		if action := parseTmuxAction(args[0]); action != "" {
+	if len(positional) > 0 {
+		if action := parseTmuxAction(positional[0]); action != "" {
 			forcedAction = action
 		} else {
-			basePath = strings.TrimSpace(args[0])
+			basePath = strings.TrimSpace(positional[0])
 		}
 	}
-	if len(args) > 1 && forcedAction == "" {
-		forcedAction = parseTmuxAction(args[1])
+	if len(positional) > 1 && forcedAction == "" {
+		forcedAction = parseTmuxAction(positional[1])
 	}
 	if basePath == "" {
 		basePath = resolveTmuxActionsBasePath()
 	}
 
 	if forcedAction != "" {
-		return runTmuxAction(basePath, forcedAction)
+		return runTmuxAction(basePath, sourcePane, forcedAction)
 	}
 
 	canOpenITermTab := canOpenShellInITermTab()
@@ -273,11 +286,13 @@ func runTmuxActions(args []string) error {
 	if m.cancel || m.chosen == "" {
 		return nil
 	}
-	return runTmuxAction(basePath, m.chosen)
+	return runTmuxAction(basePath, sourcePane, m.chosen)
 }
 
 func parseTmuxAction(value string) tmuxAction {
 	switch strings.TrimSpace(strings.ToLower(value)) {
+	case string(tmuxActionBack):
+		return tmuxActionBack
 	case string(tmuxActionShellSplit):
 		return tmuxActionShellSplit
 	case string(tmuxActionShellTab):
@@ -291,8 +306,10 @@ func parseTmuxAction(value string) tmuxAction {
 	}
 }
 
-func runTmuxAction(basePath string, action tmuxAction) error {
+func runTmuxAction(basePath string, sourcePane string, action tmuxAction) error {
 	switch action {
+	case tmuxActionBack:
+		return returnToWTX(basePath, sourcePane)
 	case tmuxActionShellSplit:
 		cmd := exec.Command("tmux", "split-window", "-v", "-p", "50", "-c", basePath)
 		return cmd.Run()
@@ -308,6 +325,44 @@ func runTmuxAction(basePath string, action tmuxAction) error {
 	default:
 		return nil
 	}
+}
+
+func returnToWTX(basePath string, sourcePane string) error {
+	basePath = strings.TrimSpace(basePath)
+	if basePath == "" {
+		return fmt.Errorf("missing path")
+	}
+
+	// Force unlock in "return to WTX" flows so stale pane ownership never blocks reuse.
+	_ = runTmuxAgentExit([]string{"--worktree", basePath, "--code", "130", "--force-unlock"})
+
+	paneID := strings.TrimSpace(sourcePane)
+	if paneID == "" {
+		paneID = strings.TrimSpace(os.Getenv("TMUX_PANE"))
+	}
+	if paneID == "" {
+		if current, err := currentPaneID(); err == nil {
+			paneID = strings.TrimSpace(current)
+		}
+	}
+	if paneID == "" {
+		return fmt.Errorf("unable to resolve active tmux pane")
+	}
+
+	bin := strings.TrimSpace(resolveAgentLifecycleBinary())
+	if bin == "" {
+		if discovered, err := exec.LookPath("wtx"); err == nil {
+			bin = discovered
+		} else {
+			bin = "wtx"
+		}
+	}
+	command := "exec " + shellQuote(bin)
+	if err := exec.Command("tmux", "respawn-pane", "-k", "-c", basePath, "-t", paneID, command).Run(); err == nil {
+		return nil
+	}
+	// Fallback to tmux "last active pane" target, which is reliable from popup contexts.
+	return exec.Command("tmux", "respawn-pane", "-k", "-c", basePath, "-t", "!", command).Run()
 }
 
 func hasCurrentPR(path string) bool {

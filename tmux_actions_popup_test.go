@@ -1,6 +1,9 @@
 package main
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestActionMatchesQuery_Substring(t *testing.T) {
 	item := tmuxActionItem{
@@ -45,5 +48,22 @@ func TestTmuxActionsModel_RebuildFiltered(t *testing.T) {
 	}
 	if item.Action != tmuxActionPR {
 		t.Fatalf("expected PR action, got %q", item.Action)
+	}
+}
+
+func TestParseTmuxAction_BackToWTX(t *testing.T) {
+	got := parseTmuxAction("back_to_wtx")
+	if got != tmuxActionBack {
+		t.Fatalf("expected back_to_wtx action, got %q", got)
+	}
+}
+
+func TestTmuxActionsCommandWithAction_InjectsSourcePane(t *testing.T) {
+	got := tmuxActionsCommandWithAction("/usr/local/bin/wtx", tmuxActionBack)
+	if strings.Contains(got, "--source-pane") {
+		t.Fatalf("did not expect source-pane flag in %q", got)
+	}
+	if want := "back_to_wtx"; !strings.Contains(got, want) {
+		t.Fatalf("expected back action token %q in %q", want, got)
 	}
 }
