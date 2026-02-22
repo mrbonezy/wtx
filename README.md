@@ -6,10 +6,10 @@
 ## Quickstart
 
 ```sh
-wtx checkout -b feat/first
+wtx checkout -b feat/first # or wco -b with aliases enabled
 # open another terminal
 wtx checkout -b feat/second
-# profit
+# profit!
 ```
 
 ## Installation
@@ -36,3 +36,6 @@ That keeps parallel work fast, isolated, and safer for multi-agent workflows.
 - `ide`: open branch-specific IDE sessions so indexing, local run configs, and edits stay scoped to the right worktree.
 - Terminal tab naming: keeps branch context visible while juggling many monorepo sessions.
 - GitHub integration: surfaces merge, review, and CI status where you are already working.
+
+## License
+[MIT](LICENSE)
