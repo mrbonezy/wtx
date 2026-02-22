@@ -15,7 +15,7 @@ wtx checkout -b feat/second
 ## Installation
 
 ```sh
-go install github.com/mrbonezy/wtx@latest
+go install github.com/mrbonezy/wtx/cmd/wtx@latest
 ```
 
 ## Why wtx
