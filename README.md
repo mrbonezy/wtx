@@ -1,5 +1,6 @@
 # wtx: monorepo-first worktrees for AI agents
-`wtx` drops each agent into a ready branch worktree, with reuse and locking built in for fast parallel work in large monorepos.
+`wtx` drops each agent into its own ready branch worktree so teams can run truly parallel agent workflows.
+Reuse + locking keep those parallel worktrees fast, isolated, and safe in large monorepos.
 
 ![wtx screenshot](docs/assets/wtx-screenshot.png)
 
