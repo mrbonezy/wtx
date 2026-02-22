@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 mkdir -p ./bin
-go build -o ./bin/wtx .
+go build -o ./bin/wtx ./cmd/wtx
 
 E2E_HOME="$(mktemp -d)"
 trap 'rm -rf "$E2E_HOME"' EXIT
