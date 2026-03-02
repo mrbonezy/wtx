@@ -315,8 +315,15 @@ func runTmuxActions(args []string) error {
 	if len(positional) > 1 && forcedAction == "" {
 		forcedAction = parseTmuxAction(positional[1])
 	}
+	basePath = normalizeTmuxActionBasePathCandidate(basePath)
+	if basePath == "" {
+		basePath = resolveTmuxActionsBasePathFromPane(sourcePane)
+	}
 	if basePath == "" {
 		basePath = resolveTmuxActionsBasePath()
+	}
+	if basePath == "" {
+		return fmt.Errorf("missing worktree path in tmux session; run wtx from the target worktree to refresh WTX_WORKTREE_PATH")
 	}
 
 	if forcedAction != "" {
@@ -728,6 +735,22 @@ func tmuxActionsCommandWithPathAndAction(wtxBin string, path string, action tmux
 	return fmt.Sprintf("%s tmux-actions %s %s", shellQuote(wtxBin), shellQuote(path), shellQuote(string(action)))
 }
 
+func tmuxActionsCommandWithSourcePane(wtxBin string, sourcePane string, action tmuxAction) string {
+	return fmt.Sprintf("%s tmux-actions --source-pane %s %s", shellQuote(wtxBin), shellQuote(sourcePane), shellQuote(string(action)))
+}
+
+func resolveTmuxActionsBasePathFromPane(sourcePane string) string {
+	sourcePane = strings.TrimSpace(sourcePane)
+	if sourcePane == "" {
+		return ""
+	}
+	out, err := exec.Command("tmux", "display-message", "-p", "-t", sourcePane, "#{pane_current_path}").Output()
+	if err != nil {
+		return ""
+	}
+	return normalizeTmuxActionBasePathCandidate(string(out))
+}
+
 func resolveTmuxActionsBasePath() string {
 	envPath := strings.TrimSpace(os.Getenv("WTX_WORKTREE_PATH"))
 	optionPath := ""
@@ -747,21 +770,32 @@ func resolveTmuxActionsBasePath() string {
 			}
 		}
 	}
-	cwd, err := os.Getwd()
-	if err != nil {
-		cwd = ""
-	}
-	return resolveTmuxActionsBasePathFromCandidates(envPath, optionPath, sessionOptionPath, sessionEnvPath, cwd)
+	return resolveTmuxActionsBasePathFromCandidates(envPath, optionPath, sessionOptionPath, sessionEnvPath)
 }
 
 func resolveTmuxActionsBasePathFromCandidates(paths ...string) string {
 	for _, path := range paths {
-		path = strings.TrimSpace(path)
+		path = normalizeTmuxActionBasePathCandidate(path)
 		if path != "" {
 			return path
 		}
 	}
 	return ""
+}
+
+func normalizeTmuxActionBasePathCandidate(path string) string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return ""
+	}
+	if strings.Contains(path, "#{") {
+		return ""
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return ""
+	}
+	return path
 }
 
 var prSummaryLabelRe = regexp.MustCompile(`\bPR\s+#\d+\b`)
