@@ -76,3 +76,25 @@ func TestWTXPaneStyleOptions(t *testing.T) {
 		}
 	}
 }
+
+func TestShouldDisableTmuxInputEnhancements(t *testing.T) {
+	tests := []struct {
+		name string
+		term string
+		want bool
+	}{
+		{name: "iterm", term: "iTerm.app", want: true},
+		{name: "ghostty", term: "ghostty", want: true},
+		{name: "ghostty version suffix", term: "ghostty2", want: true},
+		{name: "apple terminal", term: "Apple_Terminal", want: false},
+		{name: "unknown", term: "xterm-256color", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldDisableTmuxInputEnhancements(tt.term); got != tt.want {
+				t.Fatalf("shouldDisableTmuxInputEnhancements(%q)=%v, want %v", tt.term, got, tt.want)
+			}
+		})
+	}
+}

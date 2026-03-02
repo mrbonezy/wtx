@@ -386,8 +386,11 @@ func applyWTXSessionDefaults(sessionID string, enableDestroyUnattached bool) {
 	if enableDestroyUnattached {
 		tmuxSetOption(sessionID, "destroy-unattached", "on")
 	}
-	// Keep wheel scrolling and mouse interactions working across modern terminals.
-	tmuxSetOption(sessionID, "mouse", "on")
+	terminalProgram := resolveCurrentTerminalProgram()
+	if !shouldDisableTmuxInputEnhancements(terminalProgram) {
+		// Keep wheel scrolling and mouse interactions working across modern terminals.
+		tmuxSetOption(sessionID, "mouse", "on")
+	}
 	// Style split panes so inactive panes are visually de-emphasized and separators are clearer.
 	for _, option := range wtxPaneStyleOptions() {
 		tmuxSetWindowOption(sessionID, option.key, option.value)
@@ -402,13 +405,15 @@ func applyWTXSessionDefaults(sessionID string, enableDestroyUnattached bool) {
 	_ = exec.Command("tmux", "bind-key", "-r", "-T", keyTable, "M-Down", "if-shell", "-F", "#{>:#{window_panes},1}", "select-pane -D").Run()
 	_ = exec.Command("tmux", "bind-key", "-r", "-T", keyTable, "M-S-Up", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -U 3").Run()
 	_ = exec.Command("tmux", "bind-key", "-r", "-T", keyTable, "M-S-Down", "if-shell", "-F", "#{>:#{window_panes},1}", "resize-pane -D 3").Run()
-	// Preserve modified key chords (for example Shift+Enter in coding agents) inside wtx-managed tmux sessions.
-	tmuxSetWindowOption(sessionID, "xterm-keys", "on")
-	tmuxSetGlobalWindowOption("xterm-keys", "on")
-	tmuxSetServerOption("extended-keys", "always")
-	tmuxSetServerOption("extended-keys-format", "csi-u")
-	tmuxAppendServerOption("terminal-features", ",*:extkeys")
-	tmuxAppendGlobalOption("terminal-features", ",*:extkeys")
+	if !shouldDisableTmuxInputEnhancements(terminalProgram) {
+		// Preserve modified key chords (for example Shift+Enter in coding agents) inside wtx-managed tmux sessions.
+		tmuxSetWindowOption(sessionID, "xterm-keys", "on")
+		tmuxSetGlobalWindowOption("xterm-keys", "on")
+		tmuxSetServerOption("extended-keys", "always")
+		tmuxSetServerOption("extended-keys-format", "csi-u")
+		tmuxAppendServerOption("terminal-features", ",*:extkeys")
+		tmuxAppendGlobalOption("terminal-features", ",*:extkeys")
+	}
 
 	configureTmuxActionBindings(sessionID, resolveAgentLifecycleBinary())
 }
@@ -671,6 +676,14 @@ func shouldStartIsolatedTmuxSession(currentTerminal string, sessionParentTermina
 
 func normalizeTerminalProgram(value string) string {
 	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func shouldDisableTmuxInputEnhancements(terminalProgram string) bool {
+	term := normalizeTerminalProgram(terminalProgram)
+	if strings.Contains(term, "iterm") {
+		return true
+	}
+	return strings.Contains(term, "ghostty")
 }
 
 type tmuxAgentState struct {
