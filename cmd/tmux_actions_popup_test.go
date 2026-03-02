@@ -291,6 +291,20 @@ func TestTmuxActionsCommandWithAction_InjectsSourcePane(t *testing.T) {
 	}
 }
 
+
+func TestTmuxActionsCommandWithSourcePane(t *testing.T) {
+	got := tmuxActionsCommandWithSourcePane("/usr/local/bin/wtx", "%12", tmuxActionIDE)
+	if want := "--source-pane"; !strings.Contains(got, want) {
+		t.Fatalf("expected %q in %q", want, got)
+	}
+	if want := "'%12'"; !strings.Contains(got, want) {
+		t.Fatalf("expected quoted pane id %q in %q", want, got)
+	}
+	if want := "ide"; !strings.Contains(got, want) {
+		t.Fatalf("expected action %q in %q", want, got)
+	}
+}
+
 func TestTmuxActionsCommandWithPathAndAction(t *testing.T) {
 	got := tmuxActionsCommandWithPathAndAction("/usr/local/bin/wtx", "/tmp/repo path", tmuxActionRename)
 	if want := "tmux-actions"; !strings.Contains(got, want) {
@@ -407,16 +421,21 @@ func runGitOutput(t *testing.T, dir string, args ...string) string {
 }
 
 func TestResolveTmuxActionsBasePathFromCandidates(t *testing.T) {
+	optionPath := t.TempDir()
+	sessionOptionPath := t.TempDir()
+	sessionEnvPath := t.TempDir()
+	cwdPath := t.TempDir()
+
 	t.Run("uses first non-empty candidate", func(t *testing.T) {
 		got := resolveTmuxActionsBasePathFromCandidates(
 			"",
-			"/tmp/option",
-			"/tmp/session-option",
-			"/tmp/session-env",
-			"/tmp/cwd",
+			optionPath,
+			sessionOptionPath,
+			sessionEnvPath,
+			cwdPath,
 		)
-		if got != "/tmp/option" {
-			t.Fatalf("expected /tmp/option, got %q", got)
+		if got != optionPath {
+			t.Fatalf("expected %s, got %q", optionPath, got)
 		}
 	})
 
@@ -425,16 +444,30 @@ func TestResolveTmuxActionsBasePathFromCandidates(t *testing.T) {
 			"",
 			"",
 			"",
-			"/tmp/session-env",
-			"/tmp/cwd",
+			sessionEnvPath,
+			cwdPath,
 		)
-		if got != "/tmp/session-env" {
-			t.Fatalf("expected /tmp/session-env, got %q", got)
+		if got != sessionEnvPath {
+			t.Fatalf("expected %s, got %q", sessionEnvPath, got)
 		}
 
-		got = resolveTmuxActionsBasePathFromCandidates("", "", "", "", "/tmp/cwd")
-		if got != "/tmp/cwd" {
-			t.Fatalf("expected /tmp/cwd, got %q", got)
+		got = resolveTmuxActionsBasePathFromCandidates("", "", "", "", cwdPath)
+		if got != cwdPath {
+			t.Fatalf("expected %s, got %q", cwdPath, got)
+		}
+	})
+
+	t.Run("skips tmux format placeholders and invalid directories", func(t *testing.T) {
+		got := resolveTmuxActionsBasePathFromCandidates("#{pane_current_path}", filepath.Join(t.TempDir(), "missing"), optionPath)
+		if got != optionPath {
+			t.Fatalf("expected fallback to %s, got %q", optionPath, got)
+		}
+	})
+
+	t.Run("returns empty when no valid tmux metadata path exists", func(t *testing.T) {
+		got := resolveTmuxActionsBasePathFromCandidates("", "#{pane_current_path}", filepath.Join(t.TempDir(), "missing"), "")
+		if got != "" {
+			t.Fatalf("expected empty path, got %q", got)
 		}
 	})
 }

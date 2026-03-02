@@ -477,10 +477,10 @@ func configureTmuxActionBindings(sessionID string, wtxBin string) {
 	actionsPopupCmd := tmuxActionsPopupCommand(wtxBin)
 	splitCmd := tmuxActionsCommandWithPathAndAction(wtxBin, "#{pane_current_path}", tmuxActionShellSplit)
 	prCmd := tmuxActionsCommandWithPathAndAction(wtxBin, "#{pane_current_path}", tmuxActionPR)
-	ideCmd := tmuxActionsCommandWithPathAndAction(wtxBin, "#{pane_current_path}", tmuxActionIDE)
-	backCmd := tmuxActionsCommandWithPathAndAction(wtxBin, "#{pane_current_path}", tmuxActionBack)
+	ideCmd := tmuxActionsCommandWithSourcePane(wtxBin, "#{pane_id}", tmuxActionIDE)
+	backCmd := tmuxActionsCommandWithSourcePane(wtxBin, "#{pane_id}", tmuxActionBack)
 
-	_ = exec.Command("tmux", "bind-key", "-T", keyTable, "C-a", "popup", "-E", "-d", "#{pane_current_path}", "-w", "72", "-h", "20", actionsPopupCmd).Run()
+	_ = exec.Command("tmux", "bind-key", "-T", keyTable, "C-a", "popup", "-E", "-d", "#{pane_current_path}", "-w", "72", "-h", "20", actionsPopupCmd+" --source-pane '#{pane_id}'").Run()
 	_ = exec.Command("tmux", "bind-key", "-T", keyTable, "C-s", "run-shell", "-b", splitCmd).Run()
 	_ = exec.Command("tmux", "bind-key", "-T", keyTable, "C-p", "run-shell", "-b", prCmd).Run()
 	_ = exec.Command("tmux", "bind-key", "-T", keyTable, "C-l", "popup", "-E", "-d", "#{pane_current_path}", "-w", "60", "-h", "20", ideCmd).Run()
