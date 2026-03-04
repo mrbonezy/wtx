@@ -48,3 +48,82 @@ func TestChooseFallbackBaseNoRemote_FallsBackToMainOnDetached(t *testing.T) {
 		t.Fatalf("expected main fallback, got %q", got)
 	}
 }
+
+func TestFetchRemoteAndRefForBaseRef(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		baseRef    string
+		remotes    []string
+		preferred  string
+		wantRemote string
+		wantRef    string
+		wantOK     bool
+	}{
+		{
+			name:       "explicit remote branch",
+			baseRef:    "origin/main",
+			remotes:    []string{"origin"},
+			preferred:  "origin",
+			wantRemote: "origin",
+			wantRef:    "main",
+			wantOK:     true,
+		},
+		{
+			name:       "explicit refs remotes branch",
+			baseRef:    "refs/remotes/origin/release/v1",
+			remotes:    []string{"origin"},
+			preferred:  "origin",
+			wantRemote: "origin",
+			wantRef:    "release/v1",
+			wantOK:     true,
+		},
+		{
+			name:       "plain branch with preferred remote",
+			baseRef:    "feature/new-ui",
+			remotes:    []string{"origin"},
+			preferred:  "origin",
+			wantRemote: "origin",
+			wantRef:    "feature/new-ui",
+			wantOK:     true,
+		},
+		{
+			name:       "refs heads with preferred remote",
+			baseRef:    "refs/heads/main",
+			remotes:    []string{"origin"},
+			preferred:  "origin",
+			wantRemote: "origin",
+			wantRef:    "main",
+			wantOK:     true,
+		},
+		{
+			name:       "no remotes",
+			baseRef:    "main",
+			remotes:    nil,
+			preferred:  "",
+			wantRemote: "",
+			wantRef:    "",
+			wantOK:     false,
+		},
+		{
+			name:       "head",
+			baseRef:    "HEAD",
+			remotes:    []string{"origin"},
+			preferred:  "origin",
+			wantRemote: "",
+			wantRef:    "",
+			wantOK:     false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotRemote, gotRef, gotOK := fetchRemoteAndRefForBaseRef(tc.baseRef, tc.remotes, tc.preferred)
+			if gotRemote != tc.wantRemote || gotRef != tc.wantRef || gotOK != tc.wantOK {
+				t.Fatalf("fetchRemoteAndRefForBaseRef(%q) = (%q, %q, %t), want (%q, %q, %t)", tc.baseRef, gotRemote, gotRef, gotOK, tc.wantRemote, tc.wantRef, tc.wantOK)
+			}
+		})
+	}
+}

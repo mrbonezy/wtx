@@ -273,7 +273,7 @@ func (m *WorktreeManager) CheckoutNewBranch(worktreePath string, branch string, 
 		return err
 	}
 	if doFetch {
-		if err := m.FetchRepo(); err != nil {
+		if err := m.FetchRepoBaseRef(baseRef); err != nil {
 			return err
 		}
 	}
@@ -292,6 +292,38 @@ func (m *WorktreeManager) FetchRepo() error {
 		return err
 	}
 	return runCommandInDir(repoRoot, gitPath, "fetch")
+}
+
+func (m *WorktreeManager) FetchRepoBaseRef(baseRef string) error {
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" || baseRef == "HEAD" {
+		return nil
+	}
+
+	gitPath, repoRoot, err := requireGitContext(m.cwd)
+	if err != nil {
+		return err
+	}
+
+	resolved := baseRefForWorktreeAdd(repoRoot, gitPath, baseRef)
+	if _, err := gitOutputInDir(repoRoot, gitPath, "rev-parse", "--verify", resolved+"^{commit}"); err == nil {
+		return nil
+	}
+
+	remotes, err := listGitRemotes(repoRoot, gitPath)
+	if err != nil {
+		return err
+	}
+	if len(remotes) == 0 {
+		return nil
+	}
+
+	remote := preferredRemoteName(repoRoot, gitPath)
+	fetchRemote, fetchRef, ok := fetchRemoteAndRefForBaseRef(baseRef, remotes, remote)
+	if !ok {
+		return nil
+	}
+	return runCommandInDir(repoRoot, gitPath, "fetch", fetchRemote, fetchRef)
 }
 
 func (m *WorktreeManager) AcquireWorktreeLock(worktreePath string) (*WorktreeLock, error) {
@@ -508,6 +540,48 @@ func preferredRemoteName(repoRoot string, gitPath string) string {
 		}
 	}
 	return remotes[0]
+}
+
+func fetchRemoteAndRefForBaseRef(baseRef string, remotes []string, preferredRemote string) (string, string, bool) {
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" || baseRef == "HEAD" {
+		return "", "", false
+	}
+
+	for _, remote := range remotes {
+		if remote == "" {
+			continue
+		}
+		if strings.HasPrefix(baseRef, "refs/remotes/"+remote+"/") {
+			ref := strings.TrimPrefix(baseRef, "refs/remotes/"+remote+"/")
+			if strings.TrimSpace(ref) != "" {
+				return remote, ref, true
+			}
+		}
+		prefix := remote + "/"
+		if strings.HasPrefix(baseRef, prefix) {
+			ref := strings.TrimPrefix(baseRef, prefix)
+			if strings.TrimSpace(ref) != "" {
+				return remote, ref, true
+			}
+		}
+	}
+
+	if strings.HasPrefix(baseRef, "refs/heads/") {
+		baseRef = strings.TrimPrefix(baseRef, "refs/heads/")
+	}
+
+	if strings.TrimSpace(preferredRemote) == "" {
+		if len(remotes) == 0 {
+			return "", "", false
+		}
+		preferredRemote = remotes[0]
+	}
+
+	if strings.TrimSpace(baseRef) == "" {
+		return "", "", false
+	}
+	return preferredRemote, baseRef, true
 }
 
 func listGitRemotes(repoRoot string, gitPath string) ([]string, error) {
