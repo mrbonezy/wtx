@@ -1829,7 +1829,7 @@ func createAndUseExistingWorktreeCmd(mgr *WorktreeManager, branch string) tea.Cm
 func createAndUseNewWorktreeCmd(mgr *WorktreeManager, branch string, baseRef string, doFetch bool) tea.Cmd {
 	return func() tea.Msg {
 		if doFetch {
-			if err := mgr.FetchRepo(); err != nil {
+			if err := mgr.FetchRepoBaseRef(baseRef); err != nil {
 				return openUseReadyMsg{err: err}
 			}
 		}
@@ -1927,15 +1927,15 @@ var (
 	selectorDisabledSelectedStyle = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("#7D56F4")).
 					Bold(true)
-	selectorHeaderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-	branchStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
-	branchInlineStyle   = lipgloss.NewStyle().Bold(true)
-	warnStyle           = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
+	selectorHeaderStyle         = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	branchStyle                 = lipgloss.NewStyle().Foreground(lipgloss.Color("15")).Bold(true)
+	branchInlineStyle           = lipgloss.NewStyle().Bold(true)
+	warnStyle                   = lipgloss.NewStyle().Foreground(lipgloss.Color("3")).Bold(true)
 	tmuxStatusDisabledHintStyle = lipgloss.NewStyle().
 					Foreground(lipgloss.Color("#E8DFA5"))
-	updateHintStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
-	inputStyle          = lipgloss.NewStyle().
-				Padding(0, 1)
+	updateHintStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("239"))
+	inputStyle      = lipgloss.NewStyle().
+			Padding(0, 1)
 )
 
 func renderUpdateHint(hint string, isError bool) string {
