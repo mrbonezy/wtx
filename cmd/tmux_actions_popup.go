@@ -389,6 +389,15 @@ func runTmuxAction(basePath string, sourcePane string, action tmuxAction, rename
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			msg := commandErrorMessage(err, out)
+			if isNoPRForCurrentBranchMessage(msg) {
+				fallback := exec.Command("gh", "pr", "list", "--state", "open", "--author", "@me", "--web")
+				fallback.Dir = basePath
+				fallbackOut, fallbackErr := fallback.CombinedOutput()
+				if fallbackErr == nil {
+					return nil
+				}
+				msg = commandErrorMessage(fallbackErr, fallbackOut)
+			}
 			if showTmuxActionErrorMessage(msg) {
 				return nil
 			}
@@ -721,6 +730,11 @@ func normalizeTmuxDisplayMessage(message string) string {
 		return message
 	}
 	return message[:maxLen-3] + "..."
+}
+
+func isNoPRForCurrentBranchMessage(message string) bool {
+	normalized := strings.ToLower(normalizeTmuxDisplayMessage(message))
+	return strings.Contains(normalized, "no pull requests found for branch")
 }
 
 func tmuxActionsPopupCommand(wtxBin string) string {

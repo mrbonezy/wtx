@@ -48,6 +48,7 @@ func TestComputePRStatus_Priority(t *testing.T) {
 		{name: "review not required", state: "OPEN", reviewOK: false, reviewReq: false, ci: PRCISuccess, ciReq: true, unres: 0, known: true, commentsReq: true, want: "can-merge"},
 		{name: "ci not required", state: "OPEN", reviewOK: true, reviewReq: true, ci: PRCIInProgress, ciReq: false, unres: 0, known: true, commentsReq: true, want: "can-merge"},
 		{name: "comments not required", state: "OPEN", reviewOK: true, reviewReq: true, ci: PRCISuccess, ciReq: true, unres: 2, known: true, commentsReq: false, want: "can-merge"},
+		{name: "draft never can-merge", state: "OPEN", isDraft: true, reviewOK: true, reviewReq: true, ci: PRCISuccess, ciReq: true, unres: 0, known: true, commentsReq: true, want: "draft"},
 		{name: "draft fallback", state: "OPEN", isDraft: true, reviewOK: true, reviewReq: true, ci: PRCISuccess, ciReq: true, unres: 2, known: false, commentsReq: true, want: "draft"},
 		{name: "open fallback", state: "OPEN", reviewOK: true, reviewReq: true, ci: PRCISuccess, ciReq: true, unres: 2, known: false, commentsReq: true, want: "open"},
 	}

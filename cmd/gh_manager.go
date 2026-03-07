@@ -572,6 +572,9 @@ func computePRStatus(state string, mergedAt string, isDraft bool, mergeStateStat
 	if hasConflictPRStatus(mergeStateStatus) {
 		return "conflict"
 	}
+	if base == "draft" {
+		return "draft"
+	}
 	ciPassed := ciState == PRCISuccess
 	commentsResolved := commentsKnown && unresolvedComments <= 0
 	reviewReady := !reviewRequired || reviewSatisfied
@@ -588,9 +591,6 @@ func computePRStatus(state string, mergedAt string, isDraft bool, mergeStateStat
 	}
 	if commentsRequired && commentsKnown && unresolvedComments > 0 {
 		return "awaiting-comments"
-	}
-	if base == "draft" {
-		return "draft"
 	}
 	if base == "open" {
 		return "open"

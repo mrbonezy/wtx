@@ -281,6 +281,24 @@ func TestNormalizeTmuxDisplayMessage(t *testing.T) {
 	}
 }
 
+func TestIsNoPRForCurrentBranchMessage(t *testing.T) {
+	if !isNoPRForCurrentBranchMessage("no pull requests found for branch \"feature/x\"") {
+		t.Fatalf("expected no-PR message to be recognized")
+	}
+	if !isNoPRForCurrentBranchMessage("No Pull Requests Found\nfor Branch \"feature/x\"") {
+		t.Fatalf("expected no-PR message with mixed case/newline to be recognized")
+	}
+}
+
+func TestIsNoPRForCurrentBranchMessage_FalseForOtherErrors(t *testing.T) {
+	if isNoPRForCurrentBranchMessage("pull request not found") {
+		t.Fatalf("expected non-branch no-PR error to be ignored")
+	}
+	if isNoPRForCurrentBranchMessage("exit status 1") {
+		t.Fatalf("expected unrelated errors to be ignored")
+	}
+}
+
 func TestTmuxActionsCommandWithAction_InjectsSourcePane(t *testing.T) {
 	got := tmuxActionsCommandWithAction("/usr/local/bin/wtx", tmuxActionBack)
 	if strings.Contains(got, "--source-pane") {
