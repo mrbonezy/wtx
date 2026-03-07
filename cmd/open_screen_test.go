@@ -71,3 +71,64 @@ func findRenderedLine(view string, needle string) string {
 	}
 	return ""
 }
+
+func TestOpenFilteredIndicesCapsSearchResults(t *testing.T) {
+	branches := make([]openBranchOption, 0, 500)
+	for i := 0; i < 500; i++ {
+		branches = append(branches, openBranchOption{Name: "feature/load-test"})
+	}
+	got := openFilteredIndices("feature", branches)
+	if len(got) != openSearchMatchLimit {
+		t.Fatalf("expected %d results, got %d", openSearchMatchLimit, len(got))
+	}
+}
+
+func TestBuildOpenBranchLists_NoPRLoadingInSearchMode(t *testing.T) {
+	openBranches, lockedBranches, _ := buildOpenBranchLists([]string{"main", "feature/a"}, nil, false)
+	for _, b := range openBranches {
+		if b.PRLoading {
+			t.Fatalf("expected open branch PRLoading=false for search mode")
+		}
+	}
+	for _, b := range lockedBranches {
+		if b.PRLoading {
+			t.Fatalf("expected locked branch PRLoading=false for search mode")
+		}
+	}
+}
+
+func TestOpenVisibleFilteredIndices_KeepsSelectionVisible(t *testing.T) {
+	filtered := make([]int, 0, 50)
+	for i := 0; i < 50; i++ {
+		filtered = append(filtered, i)
+	}
+	visible, trimmed := openVisibleFilteredIndices(filtered, 30, 10)
+	if !trimmed {
+		t.Fatalf("expected trimmed=true")
+	}
+	if len(visible) != 10 {
+		t.Fatalf("expected 10 visible entries, got %d", len(visible))
+	}
+	found := false
+	for _, idx := range visible {
+		if idx == 29 {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected selected index to be visible")
+	}
+}
+
+func TestOpenBranchRenderLimit_Clamped(t *testing.T) {
+	if got := openBranchRenderLimit(0); got != 20 {
+		t.Fatalf("expected default limit 20, got %d", got)
+	}
+	if got := openBranchRenderLimit(200); got != 40 {
+		t.Fatalf("expected max-clamped limit 40, got %d", got)
+	}
+	if got := openBranchRenderLimit(12); got != 8 {
+		t.Fatalf("expected min-clamped limit 8, got %d", got)
+	}
+}

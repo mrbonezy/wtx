@@ -49,6 +49,14 @@ type openScreenDirtyMsg struct {
 	dirtyByPath map[string]bool
 }
 
+type openAllBranchesLoadedMsg struct {
+	branches       []openBranchOption
+	lockedBranches []openBranchOption
+	err            error
+}
+
+const openSearchMatchLimit = 200
+
 func loadOpenScreenCmd(orchestrator *WorktreeOrchestrator, mgr *WorktreeManager) tea.Cmd {
 	return func() tea.Msg {
 		if orchestrator == nil || mgr == nil {
@@ -64,11 +72,6 @@ func loadOpenScreenCmd(orchestrator *WorktreeOrchestrator, mgr *WorktreeManager)
 		}
 
 		slots := make([]openSlotState, len(status.Worktrees))
-		lockedOnlyBranches := make(map[string]bool, len(status.Worktrees))
-		openSlotBranches := make(map[string]bool, len(status.Worktrees))
-		seenPR := make(map[string]bool, len(branches)+len(status.Worktrees))
-		prBranches := make([]string, 0, len(branches)+len(status.Worktrees))
-
 		for i, wt := range status.Worktrees {
 			slots[i] = openSlotState{
 				Path:      wt.Path,
@@ -76,89 +79,8 @@ func loadOpenScreenCmd(orchestrator *WorktreeOrchestrator, mgr *WorktreeManager)
 				Locked:    !wt.Available,
 				PRLoading: true,
 			}
-			name := strings.TrimSpace(slots[i].Branch)
-			if name == "" {
-				continue
-			}
-			if slots[i].Locked {
-				if !openSlotBranches[name] {
-					lockedOnlyBranches[name] = true
-				}
-			} else {
-				openSlotBranches[name] = true
-				delete(lockedOnlyBranches, name)
-			}
-			if name != "detached" && !seenPR[name] {
-				seenPR[name] = true
-				prBranches = append(prBranches, name)
-			}
 		}
-
-		openBranches := make([]openBranchOption, 0, len(branches))
-		lockedList := make([]openBranchOption, 0, len(lockedOnlyBranches))
-		lockedSeen := make(map[string]bool, len(lockedOnlyBranches))
-		openSeen := make(map[string]bool, len(branches)+len(openSlotBranches))
-		for _, branch := range branches {
-			name := strings.TrimSpace(branch)
-			if name == "" {
-				continue
-			}
-			if lockedOnlyBranches[name] {
-				lockedList = append(lockedList, openBranchOption{
-					Name:      name,
-					PRLoading: true,
-				})
-				lockedSeen[name] = true
-				if !seenPR[name] {
-					seenPR[name] = true
-					prBranches = append(prBranches, name)
-				}
-				continue
-			}
-			openBranches = append(openBranches, openBranchOption{
-				Name:      name,
-				PRLoading: true,
-			})
-			openSeen[name] = true
-			if !seenPR[name] {
-				seenPR[name] = true
-				prBranches = append(prBranches, name)
-			}
-		}
-		missingLocked := make([]string, 0, len(lockedOnlyBranches))
-		for name := range lockedOnlyBranches {
-			if !lockedSeen[name] {
-				missingLocked = append(missingLocked, name)
-			}
-		}
-		sort.Strings(missingLocked)
-		for _, name := range missingLocked {
-			lockedList = append(lockedList, openBranchOption{
-				Name:      name,
-				PRLoading: true,
-			})
-			if !seenPR[name] {
-				seenPR[name] = true
-				prBranches = append(prBranches, name)
-			}
-		}
-		missingOpen := make([]string, 0, len(openSlotBranches))
-		for name := range openSlotBranches {
-			if !openSeen[name] {
-				missingOpen = append(missingOpen, name)
-			}
-		}
-		sort.Strings(missingOpen)
-		for _, name := range missingOpen {
-			openBranches = append(openBranches, openBranchOption{
-				Name:      name,
-				PRLoading: true,
-			})
-			if !seenPR[name] {
-				seenPR[name] = true
-				prBranches = append(prBranches, name)
-			}
-		}
+		openBranches, lockedList, prBranches := buildOpenBranchLists(branches, slots, true)
 
 		return openScreenLoadedMsg{
 			status:         status,
@@ -169,6 +91,107 @@ func loadOpenScreenCmd(orchestrator *WorktreeOrchestrator, mgr *WorktreeManager)
 			fetchID:        fmt.Sprintf("%d", time.Now().UnixNano()),
 		}
 	}
+}
+
+func loadAllOpenBranchesCmd(mgr *WorktreeManager, slots []openSlotState) tea.Cmd {
+	return func() tea.Msg {
+		if mgr == nil {
+			return openAllBranchesLoadedMsg{err: fmt.Errorf("open screen unavailable")}
+		}
+		branches, err := mgr.ListAllLocalBranchesByRecentUse()
+		if err != nil {
+			return openAllBranchesLoadedMsg{err: err}
+		}
+		openBranches, lockedBranches, _ := buildOpenBranchLists(branches, slots, false)
+		return openAllBranchesLoadedMsg{
+			branches:       openBranches,
+			lockedBranches: lockedBranches,
+		}
+	}
+}
+
+func buildOpenBranchLists(branches []string, slots []openSlotState, prLoading bool) ([]openBranchOption, []openBranchOption, []string) {
+	lockedOnlyBranches := make(map[string]bool, len(slots))
+	openSlotBranches := make(map[string]bool, len(slots))
+	seenPR := make(map[string]bool, len(branches)+len(slots))
+	prBranches := make([]string, 0, len(branches)+len(slots))
+
+	for _, slot := range slots {
+		name := strings.TrimSpace(slot.Branch)
+		if name == "" {
+			continue
+		}
+		if slot.Locked {
+			if !openSlotBranches[name] {
+				lockedOnlyBranches[name] = true
+			}
+		} else {
+			openSlotBranches[name] = true
+			delete(lockedOnlyBranches, name)
+		}
+		if name != "detached" && !seenPR[name] {
+			seenPR[name] = true
+			prBranches = append(prBranches, name)
+		}
+	}
+
+	openBranches := make([]openBranchOption, 0, len(branches))
+	lockedList := make([]openBranchOption, 0, len(lockedOnlyBranches))
+	lockedSeen := make(map[string]bool, len(lockedOnlyBranches))
+	openSeen := make(map[string]bool, len(branches)+len(openSlotBranches))
+	for _, branch := range branches {
+		name := strings.TrimSpace(branch)
+		if name == "" {
+			continue
+		}
+		if lockedOnlyBranches[name] {
+			lockedList = append(lockedList, openBranchOption{Name: name, PRLoading: prLoading})
+			lockedSeen[name] = true
+			if !seenPR[name] {
+				seenPR[name] = true
+				prBranches = append(prBranches, name)
+			}
+			continue
+		}
+		openBranches = append(openBranches, openBranchOption{Name: name, PRLoading: prLoading})
+		openSeen[name] = true
+		if !seenPR[name] {
+			seenPR[name] = true
+			prBranches = append(prBranches, name)
+		}
+	}
+
+	missingLocked := make([]string, 0, len(lockedOnlyBranches))
+	for name := range lockedOnlyBranches {
+		if !lockedSeen[name] {
+			missingLocked = append(missingLocked, name)
+		}
+	}
+	sort.Strings(missingLocked)
+	for _, name := range missingLocked {
+		lockedList = append(lockedList, openBranchOption{Name: name, PRLoading: prLoading})
+		if !seenPR[name] {
+			seenPR[name] = true
+			prBranches = append(prBranches, name)
+		}
+	}
+
+	missingOpen := make([]string, 0, len(openSlotBranches))
+	for name := range openSlotBranches {
+		if !openSeen[name] {
+			missingOpen = append(missingOpen, name)
+		}
+	}
+	sort.Strings(missingOpen)
+	for _, name := range missingOpen {
+		openBranches = append(openBranches, openBranchOption{Name: name, PRLoading: prLoading})
+		if !seenPR[name] {
+			seenPR[name] = true
+			prBranches = append(prBranches, name)
+		}
+	}
+
+	return openBranches, lockedList, prBranches
 }
 
 func fetchDirtyStatusCmd(paths []string) tea.Cmd {
@@ -398,7 +421,8 @@ func renderOpenScreen(m model) string {
 	}
 	branchColWidth := openBranchColumnWidth(m.openBranches, m.openLockedBranches)
 	filtered := openFilteredIndices(m.openTypeahead, m.openBranches)
-	for _, branchIndex := range filtered {
+	visibleFiltered, trimmed := openVisibleFilteredIndices(filtered, m.openSelected, openBranchRenderLimit(m.height))
+	for _, branchIndex := range visibleFiltered {
 		branch := m.openBranches[branchIndex]
 		cursor := "  "
 		pr := "-"
@@ -416,6 +440,9 @@ func renderOpenScreen(m model) string {
 		} else {
 			b.WriteString(actionNormalStyle.Render(line) + "\n")
 		}
+	}
+	if trimmed {
+		b.WriteString(secondaryStyle.Render(fmt.Sprintf("  ... showing %d of %d matches", len(visibleFiltered), len(filtered))) + "\n")
 	}
 	if len(filtered) == 0 && len(m.openBranches) == 0 {
 		b.WriteString("  No local branches available.\n")
@@ -570,9 +597,59 @@ func openFilteredIndices(query string, branches []openBranchOption) []int {
 		}
 		if nameMatch || prMatch {
 			out = append(out, i)
+			if len(out) >= openSearchMatchLimit {
+				break
+			}
 		}
 	}
 	return out
+}
+
+func openBranchRenderLimit(height int) int {
+	if height <= 0 {
+		return 20
+	}
+	limit := height - 16
+	if limit < 8 {
+		limit = 8
+	}
+	if limit > 40 {
+		limit = 40
+	}
+	return limit
+}
+
+func openVisibleFilteredIndices(filtered []int, selectedRow int, limit int) ([]int, bool) {
+	if len(filtered) <= limit || limit <= 0 {
+		return filtered, false
+	}
+	if selectedRow <= 0 {
+		return filtered[:limit], true
+	}
+	selectedIndex := selectedRow - 1
+	pos := -1
+	for i, idx := range filtered {
+		if idx == selectedIndex {
+			pos = i
+			break
+		}
+	}
+	if pos < 0 {
+		return filtered[:limit], true
+	}
+	start := pos - limit/2
+	if start < 0 {
+		start = 0
+	}
+	end := start + limit
+	if end > len(filtered) {
+		end = len(filtered)
+		start = end - limit
+		if start < 0 {
+			start = 0
+		}
+	}
+	return filtered[start:end], true
 }
 
 func moveOpenSelection(current int, delta int, filtered []int) int {

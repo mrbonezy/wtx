@@ -63,8 +63,14 @@ type model struct {
 	openSelected          int
 	openTypeahead         string
 	openTypeaheadAt       time.Time
+	openSearchAllActive   bool
 	openBranches          []openBranchOption
 	openLockedBranches    []openBranchOption
+	openRecentBranches    []openBranchOption
+	openRecentLocked      []openBranchOption
+	openAllBranches       []openBranchOption
+	openAllLocked         []openBranchOption
+	openAllLoaded         bool
 	openSlots             []openSlotState
 	openPRBranches        []string
 	openFetchID           string
@@ -225,11 +231,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.openLoading = false
 			m.openBranches = nil
+			m.openRecentBranches = nil
 			m.openSlots = nil
 			m.openPRBranches = nil
 			m.openLoadErr = msg.err.Error()
 			return m, nil
 		}
+		m.openSearchAllActive = false
+		m.openAllLoaded = false
+		m.openAllBranches = nil
+		m.openAllLocked = nil
+		m.openRecentBranches = msg.branches
+		m.openRecentLocked = msg.lockedBranches
 		m.openBranches = msg.branches
 		m.openLockedBranches = msg.lockedBranches
 		m.openSlots = msg.slots
@@ -266,6 +279,28 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		cmds = append(cmds, fetchOpenPRDataCmd(m.orchestrator, m.status.RepoRoot, m.openPRBranches, msg.fetchID))
 		return m, tea.Batch(cmds...)
+	case openAllBranchesLoadedMsg:
+		if msg.err != nil {
+			if strings.TrimSpace(m.openTypeahead) != "" {
+				m.openLoadErr = msg.err.Error()
+			}
+			return m, nil
+		}
+		m.openAllLoaded = true
+		m.openAllBranches = msg.branches
+		m.openAllLocked = msg.lockedBranches
+		if strings.TrimSpace(m.openTypeahead) != "" {
+			m.openSearchAllActive = true
+			m.openBranches = m.openAllBranches
+			m.openLockedBranches = m.openAllLocked
+			filtered := openFilteredIndices(m.openTypeahead, m.openBranches)
+			m.openSelected = ensureOpenSelectionVisible(m.openSelected, filtered)
+			if m.openSelected == 0 && len(filtered) > 0 {
+				m.openSelected = filtered[0] + 1
+			}
+			m.openLoadErr = ""
+		}
+		return m, nil
 	case openScreenPRDataMsg:
 		if strings.TrimSpace(msg.fetchID) == "" || msg.fetchID != m.openFetchID {
 			return m, nil
@@ -276,7 +311,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.openLoadErr = ""
+		if m.openSearchAllActive {
+			applyPRDataToOpenState(nil, nil, &m.openSlots, msg.byBranch)
+			return m, nil
+		}
 		applyPRDataToOpenState(&m.openBranches, &m.openLockedBranches, &m.openSlots, msg.byBranch)
+		m.openRecentBranches = m.openBranches
+		m.openRecentLocked = m.openLockedBranches
 		return m, nil
 	case openScreenDirtyMsg:
 		for i := range m.openSlots {
@@ -699,6 +740,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.openTypeahead += queryPart
 				}
 				m.openTypeaheadAt = now
+				if strings.TrimSpace(m.openTypeahead) != "" {
+					if m.openAllLoaded {
+						m.openSearchAllActive = true
+						m.openBranches = m.openAllBranches
+						m.openLockedBranches = m.openAllLocked
+					} else {
+						filtered := openFilteredIndices(m.openTypeahead, m.openBranches)
+						m.openSelected = ensureOpenSelectionVisible(m.openSelected, filtered)
+						if m.openSelected == 0 && len(filtered) > 0 {
+							m.openSelected = filtered[0] + 1
+						}
+						m.errMsg = ""
+						return m, loadAllOpenBranchesCmd(m.mgr, m.openSlots)
+					}
+				}
 				filtered := openFilteredIndices(m.openTypeahead, m.openBranches)
 				m.openSelected = ensureOpenSelectionVisible(m.openSelected, filtered)
 				if m.openSelected == 0 && len(filtered) > 0 {
@@ -717,6 +773,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.openTypeahead = string(r[:len(r)-1])
 				}
 				m.openTypeaheadAt = time.Now()
+				if strings.TrimSpace(m.openTypeahead) == "" {
+					m.openSearchAllActive = false
+					m.openBranches = m.openRecentBranches
+					m.openLockedBranches = m.openRecentLocked
+				} else if m.openAllLoaded {
+					m.openSearchAllActive = true
+					m.openBranches = m.openAllBranches
+					m.openLockedBranches = m.openAllLocked
+				}
 				filtered := openFilteredIndices(m.openTypeahead, m.openBranches)
 				m.openSelected = ensureOpenSelectionVisible(m.openSelected, filtered)
 				if strings.TrimSpace(m.openTypeahead) != "" && m.openSelected == 0 && len(filtered) > 0 {

@@ -192,3 +192,53 @@ func TestOpenPickAllowsDirtyWorktreeWhenBranchMatchesTarget(t *testing.T) {
 		t.Fatalf("expected command to be scheduled")
 	}
 }
+
+func TestOpenScreenSearchLoadsAllBranchesOnFirstType(t *testing.T) {
+	m := newModel()
+	m.mode = modeOpen
+	m.openStage = openStageMain
+	m.openRecentBranches = []openBranchOption{{Name: "recent/one"}}
+	m.openRecentLocked = []openBranchOption{}
+	m.openBranches = append([]openBranchOption{}, m.openRecentBranches...)
+
+	updatedModel, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'f'}})
+	updated := updatedModel.(model)
+	if updated.openTypeahead != "f" {
+		t.Fatalf("expected typeahead to be updated, got %q", updated.openTypeahead)
+	}
+	if cmd == nil {
+		t.Fatalf("expected loading-all-branches command on first search input")
+	}
+
+	updatedModel, _ = updated.Update(openAllBranchesLoadedMsg{
+		branches:       []openBranchOption{{Name: "feature/a"}, {Name: "feature/b"}},
+		lockedBranches: []openBranchOption{{Name: "locked/x"}},
+	})
+	updated = updatedModel.(model)
+	if !updated.openSearchAllActive {
+		t.Fatalf("expected search-all mode to activate after all branches load")
+	}
+	if len(updated.openBranches) != 2 {
+		t.Fatalf("expected all-branch list to be active, got %d entries", len(updated.openBranches))
+	}
+}
+
+func TestOpenScreenPRDataIgnoredForSearchAllBranchList(t *testing.T) {
+	m := newModel()
+	m.mode = modeOpen
+	m.openSearchAllActive = true
+	m.openFetchID = "fetch-1"
+	m.openBranches = []openBranchOption{{Name: "feature/a", PRLoading: false}}
+	m.openSlots = []openSlotState{{Branch: "feature/a"}}
+
+	updatedModel, _ := m.Update(openScreenPRDataMsg{
+		fetchID: "fetch-1",
+		byBranch: map[string]PRData{
+			"feature/a": {Number: 42, URL: "https://example.test/pr/42"},
+		},
+	})
+	updated := updatedModel.(model)
+	if updated.openBranches[0].HasPR {
+		t.Fatalf("expected search-all branch rows to remain without PR data")
+	}
+}

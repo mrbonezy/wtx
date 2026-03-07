@@ -180,6 +180,32 @@ func (m *WorktreeManager) ListLocalBranchesByRecentUse() ([]string, error) {
 	return branches, nil
 }
 
+func (m *WorktreeManager) ListAllLocalBranchesByRecentUse() ([]string, error) {
+	gitPath, repoRoot, err := requireGitContext(m.cwd)
+	if err != nil {
+		return nil, err
+	}
+
+	output, err := commandOutputInDir(repoRoot, gitPath, "for-each-ref",
+		"--sort=-committerdate",
+		"--format=%(refname:short)",
+		"refs/heads/")
+	if err != nil {
+		return nil, err
+	}
+
+	lines := strings.Split(string(output), "\n")
+	branches := make([]string, 0, len(lines))
+	for _, line := range lines {
+		name := strings.TrimSpace(line)
+		if name == "" {
+			continue
+		}
+		branches = append(branches, name)
+	}
+	return branches, nil
+}
+
 func (m *WorktreeManager) DeleteWorktree(path string, force bool) error {
 	path = strings.TrimSpace(path)
 	if path == "" {
