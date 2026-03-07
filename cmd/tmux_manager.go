@@ -15,7 +15,7 @@ import (
 )
 
 const tmuxStatusIntervalSeconds = "10"
-const tmuxStatusRightHint = " ^A actions | ^W back#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} "
+const tmuxStatusRightHint = " ^A actions | ^W back | ⌥[ scroll#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} "
 
 func ensureFreshTmuxSession(args []string) (bool, error) {
 	if tmuxIntegrationDisabled() {
@@ -70,6 +70,8 @@ func ensureFreshTmuxSession(args []string) (bool, error) {
 		if err := exec.Command("tmux", "switch-client", "-t", session).Run(); err != nil {
 			return false, err
 		}
+		// Re-apply after client switch so mouse/table bindings are set in attached context.
+		applyWTXSessionDefaults(session, false)
 		return true, nil
 	}
 
@@ -79,7 +81,7 @@ func ensureFreshTmuxSession(args []string) (bool, error) {
 	}
 
 	go func() {
-		waitForSessionClientAttach(session, 3*time.Second)
+		applyWTXSessionDefaults(session, false)
 		_ = tmuxSignal(launchToken)
 	}()
 
@@ -150,24 +152,6 @@ func tmuxSignal(signal string) error {
 		return nil
 	}
 	return exec.Command("tmux", "wait-for", "-S", signal).Run()
-}
-
-func waitForSessionClientAttach(sessionID string, timeout time.Duration) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return
-	}
-	deadline := time.Now().Add(timeout)
-	for {
-		out, err := exec.Command("tmux", "list-clients", "-t", sessionID, "-F", "#{client_pid}").Output()
-		if err == nil && strings.TrimSpace(string(out)) != "" {
-			return
-		}
-		if time.Now().After(deadline) {
-			return
-		}
-		time.Sleep(25 * time.Millisecond)
-	}
 }
 
 func resolveSelfBinary(args []string) (string, error) {
@@ -325,7 +309,7 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	_ = exec.Command("tmux", "set-environment", "-t", sessionID, "WTX_WORKTREE_PATH", worktreePath).Run()
 	tmuxSetOption(sessionID, "@wtx_worktree_path", worktreePath)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
-	tmuxSetOption(sessionID, "status-right", " ^A actions | ^S split | ^P PR | ^L IDE#{?#{>:#{window_panes},1}, | ⌥↑/⌥↓ move | ⌥⇧↑/⌥⇧↓ resize,} ")
+	tmuxSetOption(sessionID, "status-right", " ^A actions | ^S split | ^P PR | ^L IDE | ⌥[ scroll#{?#{>:#{window_panes},1}, | ⌥↑/⌥↓ move | ⌥⇧↑/⌥⇧↓ resize,} ")
 	tmuxSetOption(sessionID, "status-right-length", "132")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
@@ -399,6 +383,7 @@ func applyWTXSessionDefaults(sessionID string, enableDestroyUnattached bool) {
 	tmuxSetOption(sessionID, "key-table", keyTable)
 	configureTmuxStatusRefreshHooks(sessionID)
 	configureTmuxPaneBadgeBehavior(sessionID)
+	configureTmuxMouseBindings(keyTable)
 
 	// Only resize when split panes are present.
 	_ = exec.Command("tmux", "bind-key", "-r", "-T", keyTable, "M-Up", "if-shell", "-F", "#{>:#{window_panes},1}", "select-pane -U").Run()
@@ -418,6 +403,67 @@ func applyWTXSessionDefaults(sessionID string, enableDestroyUnattached bool) {
 	configureTmuxActionBindings(sessionID, resolveAgentLifecycleBinary())
 }
 
+func configureTmuxMouseBindings(keyTable string) {
+	keyTable = strings.TrimSpace(keyTable)
+	if keyTable == "" {
+		return
+	}
+	// Custom key tables do not inherit root/copy-mode bindings. Bind all relevant tables so wheel
+	// behavior is consistent even during table transitions.
+	for _, table := range []string{keyTable, "root", "copy-mode", "copy-mode-vi"} {
+		for _, binding := range tmuxMouseBindings(table) {
+			args := make([]string, 0, len(binding.args)+5)
+			args = append(args, "bind-key")
+			if binding.repeatable {
+				args = append(args, "-r")
+			}
+			args = append(args, "-T", table, binding.key)
+			args = append(args, binding.args...)
+			_ = exec.Command("tmux", args...).Run()
+		}
+	}
+}
+
+type tmuxBinding struct {
+	key        string
+	args       []string
+	repeatable bool
+}
+
+func tmuxMouseBindings(table string) []tmuxBinding {
+	table = strings.TrimSpace(table)
+	if table == "copy-mode" || table == "copy-mode-vi" {
+		return []tmuxBinding{
+			{key: "WheelUpPane", args: []string{"select-pane -t=; send-keys -X -N 1 scroll-up"}, repeatable: true},
+			{key: "WheelDownPane", args: []string{"select-pane -t=; send-keys -X -N 1 scroll-down"}, repeatable: true},
+		}
+	}
+	return []tmuxBinding{
+		{key: "MouseDown1Pane", args: []string{"select-pane", "-t="}},
+		{key: "MouseDown1Border", args: []string{"select-pane", "-t="}},
+		{key: "MouseDrag1Border", args: []string{"resize-pane", "-M"}},
+		{
+			key: "WheelUpPane",
+			args: []string{
+				"if-shell", "-F", "-t", "=", "#{||:#{alternate_on},#{mouse_any_flag}}",
+				"send-keys -M",
+				"select-pane -t=; copy-mode -e; send-keys -X -N 1 scroll-up",
+			},
+			repeatable: true,
+		},
+		{
+			key: "WheelDownPane",
+			args: []string{
+				"if-shell", "-F", "-t", "=", "#{||:#{alternate_on},#{mouse_any_flag}}",
+				"send-keys -M",
+				"select-pane -t=; copy-mode -e; send-keys -X -N 1 scroll-down",
+			},
+			repeatable: true,
+		},
+		{key: "M-[", args: []string{"copy-mode", "-e"}},
+	}
+}
+
 type tmuxOption struct {
 	key   string
 	value string
@@ -427,6 +473,7 @@ func wtxPaneStyleOptions() []tmuxOption {
 	return []tmuxOption{
 		{key: "pane-border-style", value: "fg=#1e1530"},
 		{key: "pane-active-border-style", value: "fg=#6a4b9c"},
+		{key: "mode-style", value: "fg=#1e1530,bg=#6a4b9c"},
 		{key: "pane-border-lines", value: "heavy"},
 		{key: "pane-border-status", value: "off"},
 		{key: "pane-border-format", value: "#{?#{&&:#{pane_active},#{>:#{window_panes},1}},#[bold fg=#1e1530 bg=#6a4b9c] ACTIVE #[default],}"},

@@ -1,6 +1,9 @@
 package cmd
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseBoolArg(t *testing.T) {
 	if !parseBoolArg([]string{"--worktree", "/tmp/wt.1", "--force-unlock"}, "--force-unlock") {
@@ -61,6 +64,7 @@ func TestWTXPaneStyleOptions(t *testing.T) {
 	expected := map[string]string{
 		"pane-border-style":        "fg=#1e1530",
 		"pane-active-border-style": "fg=#6a4b9c",
+		"mode-style":               "fg=#1e1530,bg=#6a4b9c",
 		"pane-border-lines":        "heavy",
 		"pane-border-status":       "off",
 		"pane-border-format":       "#{?#{&&:#{pane_active},#{>:#{window_panes},1}},#[bold fg=#1e1530 bg=#6a4b9c] ACTIVE #[default],}",
@@ -96,5 +100,59 @@ func TestShouldDisableTmuxInputEnhancements(t *testing.T) {
 				t.Fatalf("shouldDisableTmuxInputEnhancements(%q)=%v, want %v", tt.term, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestTmuxStatusRightHintIncludesScrollShortcut(t *testing.T) {
+	if !strings.Contains(tmuxStatusRightHint, "⌥[ scroll") {
+		t.Fatalf("expected status hint to include copy-mode shortcut, got %q", tmuxStatusRightHint)
+	}
+}
+
+func TestTmuxMouseBindings(t *testing.T) {
+	bindings := tmuxMouseBindings("wtx_s47")
+	if len(bindings) == 0 {
+		t.Fatalf("expected mouse bindings")
+	}
+
+	byKey := map[string]tmuxBinding{}
+	for _, binding := range bindings {
+		byKey[binding.key] = binding
+	}
+
+	for _, key := range []string{"MouseDown1Pane", "MouseDown1Border", "MouseDrag1Border", "WheelUpPane", "WheelDownPane", "M-["} {
+		if _, ok := byKey[key]; !ok {
+			t.Fatalf("expected binding for %q", key)
+		}
+	}
+
+	if got := strings.Join(byKey["WheelUpPane"].args, " "); !strings.Contains(got, "select-pane -t=; copy-mode -e; send-keys -X -N 1 scroll-up") {
+		t.Fatalf("expected WheelUpPane to select hovered pane, enter copy-mode, and scroll up, got %q", got)
+	}
+	if got := strings.Join(byKey["WheelUpPane"].args, " "); !strings.Contains(got, "#{||:#{alternate_on},#{mouse_any_flag}}") {
+		t.Fatalf("expected WheelUpPane to include alternate/mouse capture condition, got %q", got)
+	}
+
+	if !byKey["WheelUpPane"].repeatable {
+		t.Fatalf("expected WheelUpPane binding to be repeatable")
+	}
+	if !byKey["WheelDownPane"].repeatable {
+		t.Fatalf("expected WheelDownPane binding to be repeatable")
+	}
+}
+
+func TestTmuxMouseBindingsCopyModeTable(t *testing.T) {
+	bindings := tmuxMouseBindings("copy-mode-vi")
+	byKey := map[string]tmuxBinding{}
+	for _, binding := range bindings {
+		byKey[binding.key] = binding
+	}
+
+	up, ok := byKey["WheelUpPane"]
+	if !ok {
+		t.Fatalf("expected WheelUpPane in copy-mode table")
+	}
+	if got := strings.Join(up.args, " "); !strings.Contains(got, "send-keys -X -N 1 scroll-up") {
+		t.Fatalf("expected copy-mode wheel up to scroll by one line, got %q", got)
 	}
 }
