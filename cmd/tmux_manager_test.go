@@ -103,9 +103,9 @@ func TestShouldDisableTmuxInputEnhancements(t *testing.T) {
 	}
 }
 
-func TestTmuxStatusRightHintIncludesScrollShortcut(t *testing.T) {
-	if !strings.Contains(tmuxStatusRightHint, "⌥[ scroll") {
-		t.Fatalf("expected status hint to include copy-mode shortcut, got %q", tmuxStatusRightHint)
+func TestTmuxStatusRightHintDoesNotIncludeScrollShortcut(t *testing.T) {
+	if strings.Contains(tmuxStatusRightHint, "⌥[ scroll") {
+		t.Fatalf("expected status hint to avoid alt+[ shortcut, got %q", tmuxStatusRightHint)
 	}
 }
 
@@ -120,10 +120,13 @@ func TestTmuxMouseBindings(t *testing.T) {
 		byKey[binding.key] = binding
 	}
 
-	for _, key := range []string{"MouseDown1Pane", "MouseDown1Border", "MouseDrag1Border", "WheelUpPane", "WheelDownPane", "M-["} {
+	for _, key := range []string{"MouseDown1Pane", "MouseDown1Border", "MouseDrag1Border", "WheelUpPane", "WheelDownPane"} {
 		if _, ok := byKey[key]; !ok {
 			t.Fatalf("expected binding for %q", key)
 		}
+	}
+	if _, ok := byKey["M-["]; ok {
+		t.Fatalf("did not expect M-[ binding because it can conflict with CSI modified keys")
 	}
 
 	if got := strings.Join(byKey["WheelUpPane"].args, " "); !strings.Contains(got, "select-pane -t=; copy-mode -e; send-keys -X -N 1 scroll-up") {

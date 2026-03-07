@@ -15,7 +15,7 @@ import (
 )
 
 const tmuxStatusIntervalSeconds = "10"
-const tmuxStatusRightHint = " ^A actions | ^W back | ⌥[ scroll#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} "
+const tmuxStatusRightHint = " ^A actions | ^W back#{?#{>:#{window_panes},1}, | ⌥⇧↑/⌥⇧↓ resize,} "
 
 func ensureFreshTmuxSession(args []string) (bool, error) {
 	if tmuxIntegrationDisabled() {
@@ -309,7 +309,7 @@ func setDynamicWorktreeStatus(worktreePath string) {
 	_ = exec.Command("tmux", "set-environment", "-t", sessionID, "WTX_WORKTREE_PATH", worktreePath).Run()
 	tmuxSetOption(sessionID, "@wtx_worktree_path", worktreePath)
 	tmuxSetOption(sessionID, "status-left", " "+cmd+" ")
-	tmuxSetOption(sessionID, "status-right", " ^A actions | ^S split | ^P PR | ^L IDE | ⌥[ scroll#{?#{>:#{window_panes},1}, | ⌥↑/⌥↓ move | ⌥⇧↑/⌥⇧↓ resize,} ")
+	tmuxSetOption(sessionID, "status-right", " ^A actions | ^S split | ^P PR | ^L IDE#{?#{>:#{window_panes},1}, | ⌥↑/⌥↓ move | ⌥⇧↑/⌥⇧↓ resize,} ")
 	tmuxSetOption(sessionID, "status-right-length", "132")
 	titleCmd := "#(" + shellQuote(bin) + " tmux-title --worktree " + shellQuote(worktreePath) + ")"
 	tmuxSetOption(sessionID, "set-titles", "on")
@@ -460,7 +460,6 @@ func tmuxMouseBindings(table string) []tmuxBinding {
 			},
 			repeatable: true,
 		},
-		{key: "M-[", args: []string{"copy-mode", "-e"}},
 	}
 }
 

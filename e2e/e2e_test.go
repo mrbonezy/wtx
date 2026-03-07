@@ -509,6 +509,61 @@ func TestE2ECheckoutNewBranchWithFetchOnIsolatedRepo(t *testing.T) {
 	runCmd(t, clone, nil, "git", "show-ref", "--verify", "refs/heads/"+branch)
 }
 
+func TestE2ECheckoutNewBranchWithFetchUpdatesStaleOriginBase(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	originBare := filepath.Join(root, "origin.git")
+	seed := filepath.Join(root, "seed")
+	clone := filepath.Join(root, "clone")
+
+	runCmd(t, root, nil, "git", "init", "--bare", originBare)
+	runCmd(t, root, nil, "git", "init", seed)
+	runCmd(t, seed, nil, "git", "checkout", "-B", "main")
+	runCmd(t, seed, nil, "git", "config", "user.email", "e2e@example.test")
+	runCmd(t, seed, nil, "git", "config", "user.name", "WTX E2E")
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("seed v1\n"), 0o644); err != nil {
+		t.Fatalf("write seed file: %v", err)
+	}
+	runCmd(t, seed, nil, "git", "add", "README.md")
+	runCmd(t, seed, nil, "git", "commit", "-m", "init main")
+	runCmd(t, seed, nil, "git", "remote", "add", "origin", originBare)
+	runCmd(t, seed, nil, "git", "push", "-u", "origin", "main")
+
+	runCmd(t, root, nil, "git", "clone", originBare, clone)
+	runCmd(t, clone, nil, "git", "config", "user.email", "e2e@example.test")
+	runCmd(t, clone, nil, "git", "config", "user.name", "WTX E2E")
+
+	// Advance origin/main after clone so clone's origin/main is stale until fetch.
+	if err := os.WriteFile(filepath.Join(seed, "README.md"), []byte("seed v2\n"), 0o644); err != nil {
+		t.Fatalf("update seed file: %v", err)
+	}
+	runCmd(t, seed, nil, "git", "add", "README.md")
+	runCmd(t, seed, nil, "git", "commit", "-m", "advance main")
+	runCmd(t, seed, nil, "git", "push", "origin", "main")
+	latestMain := runCmd(t, seed, nil, "git", "rev-parse", "main")
+
+	managedRoot := clone + ".wt"
+	managedWorktree := filepath.Join(managedRoot, "wt.1")
+	if err := os.MkdirAll(managedRoot, 0o755); err != nil {
+		t.Fatalf("mkdir managed root: %v", err)
+	}
+	runCmd(t, clone, nil, "git", "worktree", "add", "-b", "slot/one", managedWorktree, "main")
+
+	home := t.TempDir()
+	writeConfig(t, home, "true")
+	env := testEnv(home)
+	branch := "feature/fetch-stale-origin-main"
+	result := runWTX(t, clone, env, "checkout", "-b", branch, "--from", "origin/main", "--fetch")
+	if result.err != nil {
+		t.Fatalf("e2e checkout failed: %v\n%s", result.err, result.out)
+	}
+
+	gotHead := runCmd(t, clone, nil, "git", "rev-parse", "refs/heads/"+branch)
+	if gotHead != latestMain {
+		t.Fatalf("expected new branch to start from fetched origin/main tip %q, got %q", latestMain, gotHead)
+	}
+}
+
 func TestE2ECreateBranchFailsOnUnbornHeadWithActionableError(t *testing.T) {
 	t.Parallel()
 	repo := filepath.Join(t.TempDir(), "unborn")

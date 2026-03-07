@@ -127,3 +127,29 @@ func TestFetchRemoteAndRefForBaseRef(t *testing.T) {
 		})
 	}
 }
+
+func TestIsExplicitRemoteBaseRef(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		baseRef string
+		remotes []string
+		want    bool
+	}{
+		{name: "remote short form", baseRef: "origin/main", remotes: []string{"origin"}, want: true},
+		{name: "remote refs form", baseRef: "refs/remotes/origin/main", remotes: []string{"origin"}, want: true},
+		{name: "other remote", baseRef: "upstream/main", remotes: []string{"origin", "upstream"}, want: true},
+		{name: "local branch", baseRef: "main", remotes: []string{"origin"}, want: false},
+		{name: "head", baseRef: "HEAD", remotes: []string{"origin"}, want: false},
+	}
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := isExplicitRemoteBaseRef(tc.baseRef, tc.remotes)
+			if got != tc.want {
+				t.Fatalf("isExplicitRemoteBaseRef(%q)=%v, want %v", tc.baseRef, got, tc.want)
+			}
+		})
+	}
+}

@@ -305,17 +305,19 @@ func (m *WorktreeManager) FetchRepoBaseRef(baseRef string) error {
 		return err
 	}
 
-	resolved := baseRefForWorktreeAdd(repoRoot, gitPath, baseRef)
-	if _, err := gitOutputInDir(repoRoot, gitPath, "rev-parse", "--verify", resolved+"^{commit}"); err == nil {
-		return nil
-	}
-
 	remotes, err := listGitRemotes(repoRoot, gitPath)
 	if err != nil {
 		return err
 	}
 	if len(remotes) == 0 {
 		return nil
+	}
+	explicitRemote := isExplicitRemoteBaseRef(baseRef, remotes)
+	if !explicitRemote {
+		resolved := baseRefForWorktreeAdd(repoRoot, gitPath, baseRef)
+		if _, err := gitOutputInDir(repoRoot, gitPath, "rev-parse", "--verify", resolved+"^{commit}"); err == nil {
+			return nil
+		}
 	}
 
 	remote := preferredRemoteName(repoRoot, gitPath)
@@ -582,6 +584,26 @@ func fetchRemoteAndRefForBaseRef(baseRef string, remotes []string, preferredRemo
 		return "", "", false
 	}
 	return preferredRemote, baseRef, true
+}
+
+func isExplicitRemoteBaseRef(baseRef string, remotes []string) bool {
+	baseRef = strings.TrimSpace(baseRef)
+	if baseRef == "" {
+		return false
+	}
+	for _, remote := range remotes {
+		remote = strings.TrimSpace(remote)
+		if remote == "" {
+			continue
+		}
+		if strings.HasPrefix(baseRef, remote+"/") {
+			return true
+		}
+		if strings.HasPrefix(baseRef, "refs/remotes/"+remote+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func listGitRemotes(repoRoot string, gitPath string) ([]string, error) {
