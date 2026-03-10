@@ -64,6 +64,8 @@ func TestWTXPaneStyleOptions(t *testing.T) {
 	expected := map[string]string{
 		"pane-border-style":        "fg=#1e1530",
 		"pane-active-border-style": "fg=#6a4b9c",
+		"window-style":             "fg=#ddd7f2,bg=#1f1a2c",
+		"window-active-style":      "fg=#8f89a3,bg=#14111c",
 		"mode-style":               "fg=#1e1530,bg=#6a4b9c",
 		"pane-border-lines":        "heavy",
 		"pane-border-status":       "off",

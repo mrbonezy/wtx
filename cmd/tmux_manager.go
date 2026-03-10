@@ -486,6 +486,8 @@ func wtxPaneStyleOptions() []tmuxOption {
 	return []tmuxOption{
 		{key: "pane-border-style", value: "fg=#1e1530"},
 		{key: "pane-active-border-style", value: "fg=#6a4b9c"},
+		{key: "window-style", value: "fg=#ddd7f2,bg=#1f1a2c"},
+		{key: "window-active-style", value: "fg=#8f89a3,bg=#14111c"},
 		{key: "mode-style", value: "fg=#1e1530,bg=#6a4b9c"},
 		{key: "pane-border-lines", value: "heavy"},
 		{key: "pane-border-status", value: "off"},
@@ -498,11 +500,11 @@ func configureTmuxPaneBadgeBehavior(sessionID string) {
 	if sessionID == "" {
 		return
 	}
-	updateCmd := `if -F "#{>:#{window_panes},1}" "set-window-option -q -t '#{window_id}' pane-border-status top" "set-window-option -q -t '#{window_id}' pane-border-status off"`
-	_ = exec.Command("tmux", "set-hook", "-q", "-t", sessionID, "after-split-window", updateCmd).Run()
-	_ = exec.Command("tmux", "set-hook", "-q", "-t", sessionID, "after-kill-pane", updateCmd).Run()
-	_ = exec.Command("tmux", "set-hook", "-q", "-t", sessionID, "after-join-pane", updateCmd).Run()
-	_ = exec.Command("tmux", "set-hook", "-q", "-t", sessionID, "after-break-pane", updateCmd).Run()
+	updateCmd := `if -F "#{>:#{window_panes},1}" "set-window-option -q -t . pane-border-status top" "set-window-option -q -t . pane-border-status off"`
+	_ = exec.Command("tmux", "set-hook", "-t", sessionID, "after-split-window", updateCmd).Run()
+	_ = exec.Command("tmux", "set-hook", "-t", sessionID, "after-kill-pane", updateCmd).Run()
+	_ = exec.Command("tmux", "set-hook", "-t", sessionID, "after-join-pane", updateCmd).Run()
+	_ = exec.Command("tmux", "set-hook", "-t", sessionID, "after-break-pane", updateCmd).Run()
 	for _, windowID := range tmuxSessionWindowIDs(sessionID) {
 		_ = exec.Command("tmux", "if-shell", "-F", "-t", windowID, "#{>:#{window_panes},1}", "set-window-option -q -t "+windowID+" pane-border-status top", "set-window-option -q -t "+windowID+" pane-border-status off").Run()
 	}
@@ -571,7 +573,7 @@ func configureTmuxStatusRefreshHooks(sessionID string) {
 		"client-session-changed",
 	}
 	for _, hook := range hooks {
-		_ = exec.Command("tmux", "set-hook", "-q", "-t", sessionID, hook, refreshCmd).Run()
+		_ = exec.Command("tmux", "set-hook", "-t", sessionID, hook, refreshCmd).Run()
 	}
 }
 
